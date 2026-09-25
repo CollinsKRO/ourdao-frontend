@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, waitFor, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
-import { WalletProvider, useWallet } from '@/lib/wallet'
+import { WalletProvider } from '@/lib/wallet'
 import { useWriteAction } from '@/hooks/dao/writes'
 import * as freighter from '@stellar/freighter-api'
 
@@ -26,7 +26,7 @@ vi.mock('@/lib/stellar', () => ({
 vi.mock('@/lib/dao-client', () => ({
   daoWrite: vi.fn().mockImplementation((addr, signer) => ({
     registerMember: async () => {
-      const signed = await signer('XDR_TX')
+      await signer('XDR_TX')
       return { hash: '0x123', returnValue: null }
     }
   })),

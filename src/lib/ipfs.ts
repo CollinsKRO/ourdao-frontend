@@ -60,10 +60,24 @@ export async function encryptBytes(data: Uint8Array, password: string): Promise<
     data as unknown as BufferSource
   )
 
-  const combined = new Uint8Array(salt.length + iv.length + encrypted.byteLength)
-  combined.set(salt, 0)
-  combined.set(iv, salt.length)
-  combined.set(new Uint8Array(encrypted), salt.length + iv.length)
+  // Combine version, iterations, salt, iv, and encrypted data into a single
+  // blob: [version:1][iterations:4][salt:16][iv:12][ciphertext:...]. Writing
+  // the iteration count lets decryptBytes derive the key with the same
+  // parameters even if PBKDF2_ITERATIONS is raised in a future version.
+  // Restored after #287's refactor dropped the header — encrypt/decrypt must
+  // agree on the format, and the round-trip tests pin it.
+  const iterationsBuffer = new Uint32Array([PBKDF2_ITERATIONS])
+  const combined = new Uint8Array(
+    1 + iterationsBuffer.byteLength + salt.length + iv.length + encrypted.byteLength
+  )
+  combined[0] = ENCRYPTION_VERSION
+  combined.set(new Uint8Array(iterationsBuffer.buffer), 1)
+  combined.set(salt, 1 + iterationsBuffer.byteLength)
+  combined.set(iv, 1 + iterationsBuffer.byteLength + salt.length)
+  combined.set(
+    new Uint8Array(encrypted),
+    1 + iterationsBuffer.byteLength + salt.length + iv.length
+  )
 
   return bytesToBase64(combined)
 }
@@ -72,9 +86,28 @@ export async function decryptBytes(encryptedData: string, password: string): Pro
   const encoder = new TextEncoder()
   const combined = base64ToBytes(encryptedData)
 
-  const salt = combined.slice(0, 16)
-  const iv = combined.slice(16, 28)
-  const encrypted = combined.slice(28)
+  // Extract components: [version:1][iterations:4][salt:16][iv:12][ciphertext:...]
+  // Supports both old (no version header) and new (versioned) formats for
+  // backward compatibility. Restored after #287's refactor dropped it — the
+  // versioned-header format is what encryptData has produced since the 600k
+  // iteration bump, and the round-trip tests pin it.
+  let iterations = 100000 // Old documents used 100k iterations
+  let saltStart = 0
+  let ivStart = 16
+  let encryptedStart = 28
+
+  // Check if this is a new versioned document (has version byte)
+  if (combined.length > 33 && combined[0] <= ENCRYPTION_VERSION) {
+    const iterationsBuffer = new DataView(combined.buffer, combined.byteOffset + 1, 4)
+    iterations = iterationsBuffer.getUint32(0, true)
+    saltStart = 5
+    ivStart = saltStart + 16
+    encryptedStart = ivStart + 12
+  }
+
+  const salt = combined.slice(saltStart, saltStart + 16)
+  const iv = combined.slice(ivStart, ivStart + 12)
+  const encrypted = combined.slice(encryptedStart)
 
   const keyMaterial = await crypto.subtle.importKey(
     'raw',

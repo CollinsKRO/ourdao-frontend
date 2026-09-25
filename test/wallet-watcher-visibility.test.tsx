@@ -5,14 +5,6 @@ import React from 'react'
 import { WalletProvider, useWallet } from '@/lib/wallet'
 import * as freighter from '@stellar/freighter-api'
 
-type WatchCallback = (params: {
-  address: string
-  network: string
-  networkPassphrase: string
-  error?: unknown
-}) => void
-
-let watchCallback: WatchCallback | null = null
 const mockWatcherStop = vi.fn()
 
 vi.mock('@stellar/freighter-api', () => ({
@@ -24,10 +16,7 @@ vi.mock('@stellar/freighter-api', () => ({
   isConnected: vi.fn().mockResolvedValue({ isConnected: true, version: '2.5.0' }),
   WatchWalletChanges: vi.fn().mockImplementation(function () {
     return {
-      watch: vi.fn((cb: WatchCallback) => {
-        watchCallback = cb
-        return {}
-      }),
+      watch: vi.fn(() => ({})),
       stop: mockWatcherStop,
     }
   }),
@@ -53,7 +42,6 @@ describe('Issue #218 — Wallet Watcher Visibility & State Updates', () => {
   let originalHidden: boolean
 
   beforeEach(() => {
-    watchCallback = null
     mockWatcherStop.mockClear()
     vi.mocked(freighter.WatchWalletChanges).mockClear()
     vi.mocked(freighter.isAllowed).mockResolvedValue({ isAllowed: true } as never)

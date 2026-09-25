@@ -104,6 +104,15 @@ export function formatDate(timestamp: number | string | Date): string {
 }
 
 
+// Format an address to shortened form (e.g. "GABC...WXYZ").
+// NOTE: formatStellarAddress in src/lib/stellar.ts is the canonical shortener
+// for display; this variant (6/4 split, "...") remains for callers that import
+// it from utils.
+export function formatAddress(address: string, startLength: number = 6, endLength: number = 4): string {
+  if (!address || address.length < 10) return address
+  return `${address.slice(0, startLength)}...${address.slice(-endLength)}`
+}
+
 // Format a basis-points consensus threshold (e.g. 5150 → "51.50%").
 // Trims trailing zeros so whole-number thresholds stay clean ("51%", not "51.00%").
 export function formatThreshold(basisPoints: number): string {

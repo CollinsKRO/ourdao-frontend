@@ -31,8 +31,9 @@ import {
   type UILoan,
 } from '@/hooks/useDAO'
 import { useNow } from '@/hooks/useNow'
-import { formatToken, formatDate, formatAddress, calculatePercentage, parseToken } from '@/lib/utils'
-import { PROPOSAL_STATUS_LABELS, IPFS_GATEWAY } from '@/constants'
+import { formatToken, formatDate, calculatePercentage, parseToken } from '@/lib/utils'
+import { formatStellarAddress } from '@/lib/stellar'
+import { PROPOSAL_STATUS_LABELS, PROPOSAL_STATUS_AWAITING_FUNDS, IPFS_GATEWAY } from '@/constants'
 import toast from 'react-hot-toast'
 import { PageHeader } from '@/components/PageHeader'
 

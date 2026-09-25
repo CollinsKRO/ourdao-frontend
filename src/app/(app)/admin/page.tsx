@@ -17,7 +17,7 @@ import {
   useAdminActions,
   useAdminLog,
 } from '@/hooks/useDAO'
-import { formatToken, formatDate } from '@/lib/utils'
+import { formatToken, formatDate, formatThreshold } from '@/lib/utils'
 import { formatStellarAddress, isStellarAddress } from '@/lib/stellar'
 import { LoadingSpinner } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/PageHeader'

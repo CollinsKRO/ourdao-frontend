@@ -437,7 +437,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           Wallet network mismatch: Freighter is set to{' '}
           <strong>{walletNetwork || passphraseLabel(walletNetworkPassphrase || '')}</strong>,
           this app expects <strong>{passphraseLabel(NETWORK_PASSPHRASE)}</strong>. Switch
-          Freighter's network — transactions are blocked until it matches.
+          Freighter&apos;s network — transactions are blocked until it matches.
         </div>
       )}
       {!isVersionSupported && freighterVersion && (

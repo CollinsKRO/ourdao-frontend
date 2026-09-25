@@ -28,7 +28,8 @@ import {
   type UITreasuryProposal,
 } from '@/hooks/useDAO'
 import { asBigInt } from '@/lib/dao-mappers'
-import { formatToken, formatAddress, parseToken } from '@/lib/utils'
+import { formatToken, parseToken } from '@/lib/utils'
+import { formatStellarAddress } from '@/lib/stellar'
 import { PROPOSAL_STATUS_LABELS, PROPOSAL_STATUS_AWAITING_FUNDS } from '@/constants'
 
 function TreasuryProposalRow({

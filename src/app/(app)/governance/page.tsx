@@ -27,9 +27,9 @@ import {
   type UILoanProposal,
   type UITreasuryProposal,
 } from '@/hooks/useDAO'
-import { formatToken } from '@/lib/utils'
+import { formatToken, formatThreshold } from '@/lib/utils'
 import { formatStellarAddress } from '@/lib/stellar'
-import { PROPOSAL_STATUS_LABELS } from '@/constants'
+import { PROPOSAL_STATUS_LABELS, PROPOSAL_STATUS_AWAITING_FUNDS } from '@/constants'
 
 function StatusBadge({ status }: { status: number }) {
   const variant =

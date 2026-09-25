@@ -19,7 +19,7 @@ import {
 import { useDAOStats, useUserData, useRewards, useDAOEvents, eventLabel } from '@/hooks/useDAO'
 import { formatToken, formatDate } from '@/lib/utils'
 import { formatStellarAddress } from '@/lib/stellar'
-import { MEMBER_STATUS_LABELS } from '@/constants'
+import { MEMBER_STATUS_LABELS, NON_MEMBER_LABEL } from '@/constants'
 import toast from 'react-hot-toast'
 import { useIsMobile, useResponsiveCardLayout } from '@/lib/responsive'
 import { LoadingSpinner } from '@/components/ui/skeleton'
