@@ -15,7 +15,10 @@
     "test": "vitest run",
     "audit": "audit-ci --config ./audit-ci.jsonc",
     "bundle-size": "node scripts/bundle-size.mjs measure && node scripts/bundle-size.mjs report",
-    "depcheck": "depcheck"
+    "depcheck": "depcheck",
+    "knip": "knip --no-exit-code",
+    "knip:baseline": "node scripts/knip-baseline.mjs",
+    "knip:check": "knip --reporter json | node scripts/knip-check.mjs knip-baseline.json"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
@@ -57,6 +60,7 @@
     "eslint-config-next": "16.3.3",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "jsdom": "^29.1.1",
+    "knip": "^6.38.0",
     "tailwindcss": "^4.3.2",
     "typescript": "^5",
     "vitest": "^4.1.11"

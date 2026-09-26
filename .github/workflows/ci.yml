@@ -104,6 +104,27 @@ jobs:
       - run: npm ci
       - run: npm run depcheck
 
+  # Knip detects unused *code* (exports, types, files, dependencies) — depcheck
+  # above only detects unused *packages*. Diffed against the committed baseline
+  # so pre-existing findings stay tracked as follow-ups (see
+  # docs/unused-exports.md) while any NEW finding fails the build. Kept out of
+  # `status`'s needs like depcheck/audit: an unused export landing in one file
+  # isn't something every open PR should turn red for.
+  knip:
+    name: Unused exports
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run knip:check
+      - name: Fail on a stale baseline
+        run: npm run knip:baseline -- --check
+
   # TODO #143: Contract ABI drift detection is missing. Once the interface
   # artifact from P2-012a exists, nothing in CI verifies it against the
   # contract. All jobs (lint, typecheck, test, build) pass against a stale
