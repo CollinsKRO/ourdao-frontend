@@ -24,6 +24,9 @@ Contracts: ourdao-contracts @ 00b0c62
 ### Added
 - The app version and commit are shown at the foot of the sidebar and mobile
   navigation drawer, so a bug report can name the build it came from (#250).
+- Build-time feature flags (`NEXT_PUBLIC_FEATURE_FLAGS`, off by default) so a
+  risky change can ship disabled; plus a rollback runbook and a contract
+  redeployment checklist (#274, #275, #277).
 
 ## [0.1.0] - 2026-09-26
 

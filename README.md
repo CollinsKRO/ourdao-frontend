@@ -68,6 +68,7 @@ All config is env-driven with public-testnet defaults (see `.env.example`):
 | `PINATA_JWT` | **Server-only** Pinata credential for pinning uploaded documents — read by `src/app/api/documents/route.ts`, never exposed to the client | _(empty → uploads fail with a visible error)_ |
 | `NEXT_PUBLIC_BACKEND_URL` | [`ourdao-backend`](https://github.com/ourdao/ourdao-backend) indexer/API (loan history, notifications, admin log, events) | _(empty → on-chain-only, no backend)_ — set to `http://localhost:4000` for local dev (see `.env.example`)_ |
 | `NEXT_PUBLIC_SITE_URL` | Public site origin, no trailing slash — used as `metadataBase` so Open Graph/Twitter image URLs resolve to an absolute address | `http://localhost:3000` |
+| `NEXT_PUBLIC_FEATURE_FLAGS` | Comma-separated names of the risky changes to **enable** in this build — everything is off unless listed, so a risky change can ship disabled (see [docs/FEATURE_FLAGS.md](docs/FEATURE_FLAGS.md)) | _(empty → all flags off)_ |
 
 Without a `NEXT_PUBLIC_CONTRACT_ID` the UI runs and renders, but on-chain reads/writes are disabled until you point it at a deployed contract. Without a reachable backend, everything backend-derived (loan history, notifications, activity/admin logs) degrades to empty rather than erroring — see `src/lib/backend.ts`. Without `PINATA_JWT`, document uploads fail with a clear error rather than uploading nowhere silently.
 
@@ -161,6 +162,13 @@ OurDAO Frontend requires a Node.js server runtime for full functionality (API ro
 - Security headers configuration
 - Docker and Vercel deployment recipes
 - Build-time vs runtime variable differences
+
+Two runbooks cover what happens *around* a deploy:
+
+- **[docs/ROLLBACK.md](docs/ROLLBACK.md)** — what to do when a deploy is wrong: turning a feature flag off, reverting to the last good build, or rolling forward, and what can't be rolled back at all (chain state).
+- **[docs/CONTRACT-REDPLOYMENT.md](docs/CONTRACT-REDPLOYMENT.md)** — the frontend's role when `ourdao-contracts` is redeployed: what has to change here, in what order, and how to verify it.
+
+Shipping something risky behind a flag? See [docs/FEATURE_FLAGS.md](docs/FEATURE_FLAGS.md).
 
 ## Licence Policy
 

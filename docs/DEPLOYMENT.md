@@ -28,6 +28,7 @@ These are inlined at build time and cannot be changed at runtime:
 | `NEXT_PUBLIC_IPFS_GATEWAY` | IPFS gateway URL(s) | Pinata gateway |
 | `NEXT_PUBLIC_BACKEND_URL` | OurDAO backend URL | `http://localhost:4000` |
 | `NEXT_PUBLIC_SITE_URL` | Public site origin | `http://localhost:3000` |
+| `NEXT_PUBLIC_FEATURE_FLAGS` | Comma-separated names of the risky changes to enable in this build | _(empty → all flags off)_ |
 
 ### Runtime Variables (Server-only)
 
@@ -113,3 +114,14 @@ The app will be available at `http://localhost:3000` by default.
 | Runtime | `PINATA_JWT` | When server starts | Yes |
 
 **Important**: Changing `NEXT_PUBLIC_*` values requires a full rebuild and redeployment.
+
+## After a deploy
+
+- **Something is wrong and you need to undo it:** see
+  [ROLLBACK.md](ROLLBACK.md) — the flag-off, redeploy-previous-build, and
+  roll-forward lanes, and what can't be rolled back at all.
+- **The contract was redeployed:** see
+  [CONTRACT-REDPLOYMENT.md](CONTRACT-REDPLOYMENT.md) — what has to change in
+  this repo, and in what order.
+- **You shipped something risky behind a flag:** see
+  [FEATURE_FLAGS.md](FEATURE_FLAGS.md) for how flags work and how to remove one.
