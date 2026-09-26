@@ -1,0 +1,19 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "next.config.ts",
+    "src/app/**/page.tsx",
+    "src/app/**/layout.tsx",
+    "src/app/**/route.ts",
+    "src/app/error.tsx",
+    "src/app/global-error.tsx",
+    "src/app/opengraph-image.tsx",
+    "src/lib/wallet.tsx",
+    "src/components/providers.tsx",
+    "scripts/*.mjs",
+    "test/**/*.test.{ts,tsx}",
+    "src/lib/__tests__/*.test.ts"
+  ],
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignoreDependencies": ["knip", "tailwindcss"]
+}
