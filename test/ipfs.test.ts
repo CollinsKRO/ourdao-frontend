@@ -8,7 +8,45 @@ import {
   createDocumentMetadata,
   encryptData,
   decryptData,
+  encryptBytes,
+  decryptBytes,
+  PBKDF2_ITERATIONS,
 } from '@/lib/ipfs'
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192))
+  return btoa(bin)
+}
+
+// Builds ciphertext in the pre-envelope formats: [0x01]?[salt:16][iv:12][ciphertext+tag]
+async function legacyEncrypt(
+  plaintext: string | Uint8Array,
+  password: string,
+  opts: { iterations: number; marker?: boolean; salt?: Uint8Array }
+): Promise<Uint8Array> {
+  const salt = opts.salt ?? crypto.getRandomValues(new Uint8Array(16))
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']
+  )
+  const key = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: opts.iterations, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt']
+  )
+  const data = typeof plaintext === 'string' ? new TextEncoder().encode(plaintext) : plaintext
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data))
+  const prefix = opts.marker ? [1] : []
+  const combined = new Uint8Array(prefix.length + 16 + 12 + encrypted.length)
+  combined.set(prefix, 0)
+  combined.set(salt, prefix.length)
+  combined.set(iv, prefix.length + 16)
+  combined.set(encrypted, prefix.length + 28)
+  return combined
+}
 
 function jsonResponse(body: unknown, ok = true, status = ok ? 200 : 500) {
   return { ok, status, json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
@@ -31,66 +69,68 @@ describe('encryptData / decryptData', () => {
     await expect(decryptData(encrypted, 'wrong password')).rejects.toThrow()
   })
 
-  it('decrypts new versioned ciphertext with elevated iteration count', async () => {
-    // New format includes version byte and 4-byte iteration count.
-    // This test confirms the higher iteration count is used on new encryptions.
-    const plaintext = 'versioned document'
-    const encrypted = await encryptData(plaintext, 'password')
-    const decoded = atob(encrypted)
-    // Check version byte exists (should be 0x01)
-    expect(decoded.charCodeAt(0)).toBe(1)
-    // Verify round-trip decryption works
-    expect(await decryptData(encrypted, 'password')).toBe(plaintext)
+  it('produces the base64 of a binary envelope with a magic, version and iteration header', async () => {
+    const encrypted = await encryptData('versioned document', 'password')
+    const decoded = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0))
+    expect(Array.from(decoded.subarray(0, 4))).toEqual([0x89, 0x4f, 0x44, 0x45])
+    expect(decoded[4]).toBe(2)
+    expect(new DataView(decoded.buffer).getUint32(5)).toBe(PBKDF2_ITERATIONS)
+    expect(await decryptData(encrypted, 'password')).toBe('versioned document')
   })
 
   it('decrypts old unversioned ciphertext for backward compatibility', async () => {
-    // Simulate an old encrypted document (no version byte, 100k iterations).
-    // Format: [salt:16][iv:12][ciphertext:...]
-    const plaintext = 'old document'
-    const encoder = new TextEncoder()
+    const combined = await legacyEncrypt('old document', 'pw', { iterations: 100_000 })
+    expect(await decryptData(bytesToBase64(combined), 'pw')).toBe('old document')
+  })
 
-    // Manually encrypt with old parameters to create a legacy ciphertext
+  it('decrypts old unversioned ciphertext whose salt happens to start with the v1 marker', async () => {
     const salt = crypto.getRandomValues(new Uint8Array(16))
-    const iv = crypto.getRandomValues(new Uint8Array(12))
-    const password = 'pw'
+    salt[0] = 1
+    const combined = await legacyEncrypt('unlucky salt', 'pw', { iterations: 100_000, salt })
+    expect(await decryptData(bytesToBase64(combined), 'pw')).toBe('unlucky salt')
+  })
 
-    const keyMaterial = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(password),
-      'PBKDF2',
-      false,
-      ['deriveBits', 'deriveKey']
-    )
+  it('decrypts v1 ciphertext (0x01 marker, 600,000 iterations)', async () => {
+    const combined = await legacyEncrypt('v1 document', 'pw', { iterations: 600_000, marker: true })
+    expect(await decryptData(bytesToBase64(combined), 'pw')).toBe('v1 document')
+  })
+})
 
-    const key = await crypto.subtle.deriveKey(
-      {
-        name: 'PBKDF2',
-        salt: salt,
-        iterations: 100000, // Old iteration count
-        hash: 'SHA-256',
-      },
-      keyMaterial,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    )
+describe('encryptBytes / decryptBytes', () => {
+  it('round-trips arbitrary binary bytes unchanged, adding only the fixed header and tag', async () => {
+    // Bytes that are not valid UTF-8 (a PDF header followed by 0x80-0xFF runs).
+    const original = new Uint8Array(1_000_000)
+    for (let i = 0; i < original.length; i++) original[i] = (i * 131 + 7) % 256
+    original.set([0x25, 0x50, 0x44, 0x46, 0x2d, 0xe2, 0xe3, 0xcf, 0xd3], 0)
 
-    const encryptedBytes = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv: iv },
-      key,
-      encoder.encode(plaintext)
-    )
+    const envelope = await encryptBytes(original, 'pw')
 
-    // Combine without version (old format): [salt:16][iv:12][ciphertext:...]
-    const combined = new Uint8Array(salt.length + iv.length + encryptedBytes.byteLength)
-    combined.set(salt, 0)
-    combined.set(iv, salt.length)
-    combined.set(new Uint8Array(encryptedBytes), salt.length + iv.length)
+    expect(envelope.length).toBe(original.length + 37 + 16)
+    expect(await decryptBytes(envelope, 'pw')).toEqual(original)
+  })
 
-    const oldFormatCiphertext = btoa(String.fromCharCode(...combined))
+  it('reads documents stored in the older base64-text format', async () => {
+    const plaintext = new TextEncoder().encode('stored before the binary envelope')
+    const combined = await legacyEncrypt(plaintext, 'pw', { iterations: 600_000, marker: true })
+    const storedBytes = new TextEncoder().encode(bytesToBase64(combined))
+    expect(await decryptBytes(storedBytes, 'pw')).toEqual(plaintext)
+  })
 
-    // Verify decryptData can still read it
-    expect(await decryptData(oldFormatCiphertext, password)).toBe(plaintext)
+  it('rejects an envelope whose header was tampered with', async () => {
+    const envelope = await encryptBytes(new Uint8Array([1, 2, 3]), 'pw')
+    new DataView(envelope.buffer).setUint32(5, PBKDF2_ITERATIONS + 1)
+    await expect(decryptBytes(envelope, 'pw')).rejects.toThrow()
+  })
+
+  it('rejects an envelope with an out-of-range iteration count without deriving a key', async () => {
+    const envelope = await encryptBytes(new Uint8Array([1, 2, 3]), 'pw')
+    new DataView(envelope.buffer).setUint32(5, 0xffffffff)
+    await expect(decryptBytes(envelope, 'pw')).rejects.toThrow(/key-derivation/)
+  })
+
+  it('refuses an empty password', async () => {
+    await expect(encryptBytes(new Uint8Array([1]), '')).rejects.toThrow(/password is required/)
+    await expect(encryptData('x', '')).rejects.toThrow(/password is required/)
   })
 })
 
@@ -125,6 +165,15 @@ describe('uploadToIPFS', () => {
     const [, init] = vi.mocked(fetch).mock.calls[0]
     const uploadedText = await (init!.body as Blob).text()
     expect(uploadedText).not.toContain('hello world')
+  })
+
+  it('refuses an encrypted upload with an empty password instead of uploading plaintext', async () => {
+    const file = new File(['hello world'], 'doc.txt', { type: 'text/plain' })
+    const wallet = { address: 'GTEST', signMessage: vi.fn().mockResolvedValue('sig') }
+
+    await expect(uploadToIPFS(file, true, '', wallet)).rejects.toThrow(/password is required/)
+    await expect(uploadToIPFS(file, true, undefined, wallet)).rejects.toThrow(/password is required/)
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it('throws with the server-provided error message on a non-2xx response, not a silent fallback', async () => {
@@ -236,6 +285,16 @@ describe('downloadFromIPFS', () => {
     const result = await downloadFromIPFS('QmSomeHash', true, 'pw')
 
     expect(new TextDecoder().decode(result.content)).toBe('secret contents')
+    expect(result.decrypted).toBe(true)
+  })
+
+  it('decrypts a binary envelope fetched from the gateway', async () => {
+    const original = new Uint8Array([0xff, 0x00, 0x80, 0xfe, 0x25])
+    vi.mocked(fetch).mockResolvedValueOnce(bytesResponse(await encryptBytes(original, 'pw')))
+
+    const result = await downloadFromIPFS('QmSomeHash', true, 'pw')
+
+    expect(result.content).toEqual(original)
     expect(result.decrypted).toBe(true)
   })
 

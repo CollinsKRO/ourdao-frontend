@@ -1,12 +1,45 @@
 import { IPFS_GATEWAY, IPFS_GATEWAYS, IPFS_GATEWAY_TIMEOUT_MS } from '@/constants'
 
-// PBKDF2 iteration count per OWASP guidance (as of 2024).
-// Raised from 100,000 to provide protection against offline brute-force attacks
-// on documents stored on public IPFS. Future versions may increase this further.
-const PBKDF2_ITERATIONS = 600000
+// PBKDF2-SHA256 iteration count for new encryptions, per current OWASP
+// guidance. The count is written into every envelope header, so raising it
+// later only affects new uploads — existing documents keep decrypting with
+// the count they were written with.
+export const PBKDF2_ITERATIONS = 600_000
 
-// Encryption version marker: increment if algorithm changes to support migrations
-const ENCRYPTION_VERSION = 1
+// Iteration count used by the unversioned and v1 formats, which did not
+// record it.
+const LEGACY_PBKDF2_ITERATIONS = 100_000
+const V1_PBKDF2_ITERATIONS = 600_000
+
+// Upper bound on a header-supplied iteration count, so a crafted document
+// cannot pin the viewer's CPU in key derivation.
+const MAX_PBKDF2_ITERATIONS = 10_000_000
+
+const SALT_BYTES = 16
+const IV_BYTES = 12
+const GCM_TAG_BYTES = 16
+
+// Binary envelope (current format):
+//   [magic:4][version:1][iterations:4, big-endian][salt:16][iv:12][ciphertext+tag]
+// The magic starts with 0x89, which never occurs in base64 text, so it cannot
+// be confused with the older base64-framed formats. The whole header is bound
+// to the ciphertext as AES-GCM additional data.
+const ENVELOPE_MAGIC = [0x89, 0x4f, 0x44, 0x45] // "\x89ODE"
+const ENVELOPE_VERSION = 2
+const ENVELOPE_HEADER_BYTES = ENVELOPE_MAGIC.length + 1 + 4 + SALT_BYTES + IV_BYTES
+
+// Older formats, both stored as base64 text:
+//   v1:           [0x01][salt:16][iv:12][ciphertext+tag]  (600,000 iterations)
+//   unversioned:  [salt:16][iv:12][ciphertext+tag]        (100,000 iterations)
+const V1_MARKER = 1
+
+interface DecryptParams {
+  salt: Uint8Array
+  iv: Uint8Array
+  iterations: number
+  ciphertext: Uint8Array
+  additionalData?: Uint8Array
+}
 
 // Helper functions for chunked Base64 encoding/decoding without stack overflow
 function bytesToBase64(bytes: Uint8Array): string {
@@ -26,16 +59,7 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes
 }
 
-// Convert arbitrary string to bytes using 8-bit character codes (safe for any data)
-function stringToBytes(str: string): Uint8Array {
-  const bytes = new Uint8Array(str.length)
-  for (let i = 0; i < str.length; i++) {
-    bytes[i] = str.charCodeAt(i)
-  }
-  return bytes
-}
-
-// Convert bytes back to string using 8-bit character codes (reverse of stringToBytes)
+// Convert bytes back to string using 8-bit character codes
 function bytesToString(bytes: Uint8Array): string {
   let str = ''
   for (let i = 0; i < bytes.length; i += 8192) {
@@ -44,26 +68,26 @@ function bytesToString(bytes: Uint8Array): string {
   return str
 }
 
-export async function encryptBytes(data: Uint8Array, password: string): Promise<string> {
-  const encoder = new TextEncoder()
+function assertPassword(password: string | undefined): asserts password is string {
+  if (!password) {
+    throw new Error('A password is required to encrypt or decrypt a document')
+  }
+}
 
-  // Generate salt and IV
-  const salt = crypto.getRandomValues(new Uint8Array(16))
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-
+async function deriveKey(password: string, salt: Uint8Array, iterations: number): Promise<CryptoKey> {
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(password),
+    new TextEncoder().encode(password),
     'PBKDF2',
     false,
-    ['deriveBits', 'deriveKey']
+    ['deriveKey']
   )
 
-  const key = await crypto.subtle.deriveKey(
+  return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt: salt,
-      iterations: PBKDF2_ITERATIONS,
+      salt: salt as unknown as BufferSource,
+      iterations,
       hash: 'SHA-256'
     },
     keyMaterial,
@@ -71,81 +95,145 @@ export async function encryptBytes(data: Uint8Array, password: string): Promise<
     false,
     ['encrypt', 'decrypt']
   )
+}
 
+function hasEnvelopeMagic(bytes: Uint8Array): boolean {
+  return ENVELOPE_MAGIC.every((b, i) => bytes[i] === b)
+}
+
+function parseEnvelope(bytes: Uint8Array): DecryptParams {
+  if (bytes.length < ENVELOPE_HEADER_BYTES + GCM_TAG_BYTES) {
+    throw new Error('Encrypted document is truncated')
+  }
+  const version = bytes[ENVELOPE_MAGIC.length]
+  if (version !== ENVELOPE_VERSION) {
+    throw new Error(`Unsupported encrypted document version ${version}`)
+  }
+  const iterOffset = ENVELOPE_MAGIC.length + 1
+  const iterations = new DataView(bytes.buffer, bytes.byteOffset + iterOffset, 4).getUint32(0)
+  if (iterations < LEGACY_PBKDF2_ITERATIONS || iterations > MAX_PBKDF2_ITERATIONS) {
+    throw new Error('Encrypted document has an invalid key-derivation parameter')
+  }
+  const saltOffset = iterOffset + 4
+  const ivOffset = saltOffset + SALT_BYTES
+  return {
+    iterations,
+    salt: bytes.slice(saltOffset, ivOffset),
+    iv: bytes.slice(ivOffset, ENVELOPE_HEADER_BYTES),
+    ciphertext: bytes.slice(ENVELOPE_HEADER_BYTES),
+    additionalData: bytes.slice(0, ENVELOPE_HEADER_BYTES),
+  }
+}
+
+// The v1 marker byte is indistinguishable from an unversioned payload whose
+// random salt happens to start with 0x01, so both readings are returned and
+// tried in order; AES-GCM authentication rejects the wrong one.
+function parseLegacy(combined: Uint8Array): DecryptParams[] {
+  const candidates: DecryptParams[] = []
+  if (combined[0] === V1_MARKER && combined.length >= 1 + SALT_BYTES + IV_BYTES + GCM_TAG_BYTES) {
+    candidates.push({
+      iterations: V1_PBKDF2_ITERATIONS,
+      salt: combined.slice(1, 1 + SALT_BYTES),
+      iv: combined.slice(1 + SALT_BYTES, 1 + SALT_BYTES + IV_BYTES),
+      ciphertext: combined.slice(1 + SALT_BYTES + IV_BYTES),
+    })
+  }
+  if (combined.length >= SALT_BYTES + IV_BYTES + GCM_TAG_BYTES) {
+    candidates.push({
+      iterations: LEGACY_PBKDF2_ITERATIONS,
+      salt: combined.slice(0, SALT_BYTES),
+      iv: combined.slice(SALT_BYTES, SALT_BYTES + IV_BYTES),
+      ciphertext: combined.slice(SALT_BYTES + IV_BYTES),
+    })
+  }
+  if (candidates.length === 0) {
+    throw new Error('Encrypted document is truncated')
+  }
+  return candidates
+}
+
+async function decryptWith(candidates: DecryptParams[], password: string): Promise<Uint8Array> {
+  let lastError: unknown
+  for (const { salt, iv, iterations, ciphertext, additionalData } of candidates) {
+    try {
+      const key = await deriveKey(password, salt, iterations)
+      const decrypted = await crypto.subtle.decrypt(
+        {
+          name: 'AES-GCM',
+          iv: iv as unknown as BufferSource,
+          ...(additionalData && { additionalData: additionalData as unknown as BufferSource }),
+        },
+        key,
+        ciphertext as unknown as BufferSource
+      )
+      return new Uint8Array(decrypted)
+    } catch (err) {
+      lastError = err
+    }
+  }
+  throw lastError
+}
+
+/**
+ * Encrypts arbitrary bytes into the binary envelope. Throws on an empty
+ * password rather than returning anything that could be mistaken for
+ * ciphertext.
+ */
+export async function encryptBytes(data: Uint8Array, password: string): Promise<Uint8Array> {
+  assertPassword(password)
+
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES))
+  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES))
+
+  const header = new Uint8Array(ENVELOPE_HEADER_BYTES)
+  header.set(ENVELOPE_MAGIC, 0)
+  header[ENVELOPE_MAGIC.length] = ENVELOPE_VERSION
+  new DataView(header.buffer).setUint32(ENVELOPE_MAGIC.length + 1, PBKDF2_ITERATIONS)
+  header.set(salt, ENVELOPE_MAGIC.length + 5)
+  header.set(iv, ENVELOPE_MAGIC.length + 5 + SALT_BYTES)
+
+  const key = await deriveKey(password, salt, PBKDF2_ITERATIONS)
   const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv },
+    { name: 'AES-GCM', iv, additionalData: header },
     key,
     data as unknown as BufferSource
   )
 
-  const combined = new Uint8Array(1 + salt.length + iv.length + encrypted.byteLength)
-  combined[0] = ENCRYPTION_VERSION
-  combined.set(salt, 1)
-  combined.set(iv, 1 + salt.length)
-  combined.set(new Uint8Array(encrypted), 1 + salt.length + iv.length)
-
-  return bytesToBase64(combined)
+  const envelope = new Uint8Array(header.length + encrypted.byteLength)
+  envelope.set(header, 0)
+  envelope.set(new Uint8Array(encrypted), header.length)
+  return envelope
 }
 
-export async function decryptBytes(encryptedData: string, password: string): Promise<Uint8Array> {
-  const encoder = new TextEncoder()
-  const combined = base64ToBytes(encryptedData)
-
-  let salt: Uint8Array
-  let iv: Uint8Array
-  let encrypted: Uint8Array
-  let iterations: number
-
-  if (combined[0] === ENCRYPTION_VERSION && combined.length >= 1 + 16 + 12 + 16) {
-    salt = combined.slice(1, 17)
-    iv = combined.slice(17, 29)
-    encrypted = combined.slice(29)
-    iterations = PBKDF2_ITERATIONS
-  } else {
-    salt = combined.slice(0, 16)
-    iv = combined.slice(16, 28)
-    encrypted = combined.slice(28)
-    iterations = 100000
+/**
+ * Decrypts a stored document: either the binary envelope, or the older
+ * base64-text formats (v1 and unversioned) that earlier uploads produced.
+ */
+export async function decryptBytes(stored: Uint8Array, password: string): Promise<Uint8Array> {
+  assertPassword(password)
+  if (hasEnvelopeMagic(stored)) {
+    return decryptWith([parseEnvelope(stored)], password)
   }
-
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits', 'deriveKey']
-  )
-
-  const key = await crypto.subtle.deriveKey(
-    {
-      name: 'PBKDF2',
-      salt: salt as unknown as BufferSource,
-      iterations: iterations,
-      hash: 'SHA-256'
-    },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  )
-
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: iv as unknown as BufferSource },
-    key,
-    encrypted as unknown as BufferSource
-  )
-
-  return new Uint8Array(decrypted)
+  let combined: Uint8Array
+  try {
+    combined = base64ToBytes(bytesToString(stored).trim())
+  } catch {
+    throw new Error('Unrecognized encrypted document format')
+  }
+  return decryptWith(parseLegacy(combined), password)
 }
 
-// Encryption utilities for string data
+// Encryption utilities for string data. The result is the binary envelope,
+// base64-encoded so it can travel as text.
 export async function encryptData(data: string, password: string): Promise<string> {
-  return encryptBytes(new TextEncoder().encode(data), password)
+  return bytesToBase64(await encryptBytes(new TextEncoder().encode(data), password))
 }
 
 export async function decryptData(encryptedData: string, password: string): Promise<string> {
-  const decryptedBytes = await decryptBytes(encryptedData, password)
-  return new TextDecoder().decode(decryptedBytes)
+  assertPassword(password)
+  const combined = base64ToBytes(encryptedData)
+  const candidates = hasEnvelopeMagic(combined) ? [parseEnvelope(combined)] : parseLegacy(combined)
+  return new TextDecoder().decode(await decryptWith(candidates, password))
 }
 
 // IPFS upload with encryption. Encryption happens here, client-side, before
@@ -157,15 +245,12 @@ export async function uploadToIPFS(
   password?: string,
   wallet?: { address: string; signMessage: (message: string) => Promise<string> }
 ): Promise<{ hash: string; size: number; encrypted: boolean }> {
-  const fileContent = new Uint8Array(await file.arrayBuffer())
-  let processedData: Uint8Array
+  // An encrypted upload with no password must fail, never fall through to
+  // pinning the plaintext on public IPFS.
+  if (encrypt) assertPassword(password)
 
-  if (encrypt && password) {
-    const encryptedBase64 = await encryptBytes(fileContent, password)
-    processedData = stringToBytes(encryptedBase64)
-  } else {
-    processedData = fileContent
-  }
+  const fileContent = new Uint8Array(await file.arrayBuffer())
+  const processedData = encrypt ? await encryptBytes(fileContent, password!) : fileContent
 
   if (!wallet?.address || !wallet?.signMessage) {
     throw new Error('Wallet not connected')
@@ -197,7 +282,7 @@ export async function uploadToIPFS(
       Authorization: `Bearer ${signature}`,
       'x-stellar-address': wallet.address,
     },
-    body: new Blob([new Uint8Array(processedData)]),
+    body: new Blob([new Uint8Array(processedData)], { type: 'application/octet-stream' }),
   })
 
   if (!res.ok) {
@@ -244,8 +329,7 @@ export async function downloadFromIPFS(
   const fileData = new Uint8Array(await res.arrayBuffer())
 
   if (encrypted && password) {
-    const encryptedBase64 = bytesToString(fileData)
-    const content = await decryptBytes(encryptedBase64, password)
+    const content = await decryptBytes(fileData, password)
     return {
       content,
       decrypted: true,

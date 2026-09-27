@@ -5,15 +5,17 @@ import { checkRateLimit } from '@/lib/rate-limiter'
 
 /**
  * Hard cap on an upload body. The client limits plaintext to 10 MB
- * (DocumentUpload's `maxSize`); encryption + base64 framing inflates that by
- * roughly a third, so 16 MB leaves headroom without letting an anonymous
- * caller make the server allocate arbitrary amounts of memory.
+ * (DocumentUpload's `maxSize`); the binary encryption envelope adds only a
+ * fixed 53-byte header and tag, and documents uploaded in the older
+ * base64-framed format were up to a third larger. 16 MB covers both without
+ * letting an anonymous caller make the server allocate arbitrary amounts of
+ * memory.
  */
 export const MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 
 /**
  * Minimum plausible byte size for an encrypted payload envelope
- * (16 bytes salt + 12 bytes IV + AES-GCM tag/ciphertext).
+ * (the header and AES-GCM tag alone are larger than this; see src/lib/ipfs.ts).
  */
 export const MIN_UPLOAD_BYTES = 32
 
