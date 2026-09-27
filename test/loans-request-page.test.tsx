@@ -8,6 +8,8 @@ const mockAttach = vi.fn()
 const mockToastSuccess = vi.fn()
 const mockToastError = vi.fn()
 let mockStats: Record<string, unknown> = { features: { documentStorage: true } }
+const mockUseLoanTerms = vi.fn()
+const NO_TERMS = { terms: null, isLoading: false, isError: false }
 
 // Mutable so a test can put the wallet back into its pre-restore state, which
 // is what a hard refresh looks like for the first few renders (#307).
@@ -38,6 +40,7 @@ vi.mock('@/hooks/useDAO', () => ({
     error: null,
     isSuccess: false,
   }),
+  useLoanTerms: (...args: unknown[]) => mockUseLoanTerms(...args),
   useAttachDocument: () => ({
     attach: (...args: unknown[]) => mockAttach(...args),
     isPending: false,
@@ -72,6 +75,7 @@ describe('RequestLoanPage', () => {
     mockUserData = { isConnected: true, isMember: true, hasActiveLoan: false }
     mockRequestLoan.mockResolvedValue(42)
     mockAttach.mockResolvedValue({ hash: 'txhash' })
+    mockUseLoanTerms.mockReturnValue(NO_TERMS)
   })
   afterEach(() => vi.useRealTimers())
 
@@ -189,6 +193,57 @@ describe('RequestLoanPage', () => {
       fireEvent.click(screen.getByRole('button', { name: /Submit Request/ }))
 
       await waitFor(() => expect(mockRequestLoan).toHaveBeenCalledWith(BigInt(1000) * BigInt(10 ** 7)))
+    })
+  })
+
+  describe('loan terms priced by the contract', () => {
+    const TOKEN = BigInt(10 ** 7)
+
+    it('prices the entered amount with calculate_loan_terms and shows its terms, not an invented APR', () => {
+      mockUseLoanTerms.mockReturnValue({
+        terms: { interestRate: 1250, totalRepayment: BigInt(1125) * TOKEN, duration: 365 * 86400 },
+        isLoading: false,
+        isError: false,
+      })
+      render(<RequestLoanPage />)
+      fireEvent.change(screen.getByLabelText(/Loan Amount/), { target: { value: '1000' } })
+
+      expect(mockUseLoanTerms).toHaveBeenLastCalledWith(BigInt(1000) * TOKEN)
+      expect(screen.getByText('12.50% over the term')).toBeInTheDocument()
+      expect(screen.getByText('1125')).toBeInTheDocument()
+      expect(screen.getByText('1 year')).toBeInTheDocument()
+      expect(screen.queryByText(/APR/)).not.toBeInTheDocument()
+    })
+
+    it('shows a loading state while the terms are being calculated', () => {
+      mockUseLoanTerms.mockReturnValue({ terms: null, isLoading: true, isError: false })
+      render(<RequestLoanPage />)
+      fireEvent.change(screen.getByLabelText(/Loan Amount/), { target: { value: '10' } })
+
+      expect(screen.getByText(/Calculating terms/)).toBeInTheDocument()
+    })
+
+    it('says so when the terms read fails instead of guessing a rate', () => {
+      mockUseLoanTerms.mockReturnValue({ terms: null, isLoading: false, isError: true })
+      render(<RequestLoanPage />)
+      fireEvent.change(screen.getByLabelText(/Loan Amount/), { target: { value: '10' } })
+
+      expect(screen.getByText(/Couldn.t load the loan terms/)).toBeInTheDocument()
+      expect(screen.queryByText(/%/)).not.toBeInTheDocument()
+    })
+
+    it('does not price an amount above the maximum loan', () => {
+      mockStats = {
+        features: { documentStorage: true },
+        initialized: true,
+        treasuryBalance: BigInt(5_000) * TOKEN,
+        maxLoanToTreasuryRatio: 2000,
+      }
+      render(<RequestLoanPage />)
+      fireEvent.change(screen.getByLabelText(/Loan Amount/), { target: { value: '1000.5' } })
+
+      expect(mockUseLoanTerms).toHaveBeenLastCalledWith(null)
+      expect(screen.getByText(/Enter an amount within the maximum/)).toBeInTheDocument()
     })
   })
 

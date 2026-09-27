@@ -12,8 +12,8 @@ import {
   LockClosedIcon,
   DocumentIcon
 } from '@heroicons/react/24/outline'
-import { useDAOStats, useUserData, useLoanRequest, useAttachDocument } from '@/hooks/useDAO'
-import { parseToken, formatToken, computeMaxLoan } from '@/lib/utils'
+import { useDAOStats, useUserData, useLoanRequest, useAttachDocument, useLoanTerms } from '@/hooks/useDAO'
+import { parseToken, formatToken, computeMaxLoan, formatThreshold, formatDuration } from '@/lib/utils'
 import dynamic from 'next/dynamic'
 
 // Dynamic import to avoid SSR issues with IPFS
@@ -71,16 +71,16 @@ export default function RequestLoanPage() {
     : null
   const maxLoanDisplay = maxLoan === null ? null : formatToken(maxLoan, { displayDecimals: 7 })
 
-  // Estimated interest is derived from the amount, not synced state — no
-  // effect needed, it's just recomputed on every render.
-  const estimatedInterest = (() => {
-    if (!formData.amount) return 0
-    const amount = parseFloat(formData.amount)
-    // Simple interest calculation - in real app this would come from contract
-    const baseRate = 8 // 8% base rate
-    const riskMultiplier = amount > 10 ? 1.2 : 1.0 // Higher amounts = higher risk
-    return baseRate * riskMultiplier
-  })()
+  // Price the loan with the contract's own calculate_loan_terms: the rate is a
+  // curve over amount / treasury, clamped by the policy's min/max rates, so it
+  // cannot be reproduced client-side. Amounts over the cap aren't priced since
+  // the contract would reject the request anyway.
+  const parsedAmount = formData.amount ? parseToken(formData.amount) : BigInt(0)
+  const exceedsMax = maxLoan !== null && parsedAmount > maxLoan
+  const { terms, isLoading: termsLoading, isError: termsError } = useLoanTerms(
+    parsedAmount > BigInt(0) && !exceedsMax ? parsedAmount : null
+  )
+  const rateDisplay = terms ? formatThreshold(terms.interestRate) : null
 
   const handleInputChange = (field: 'amount' | 'documentHash', value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -170,27 +170,50 @@ export default function RequestLoanPage() {
                 </p>
               </div>
 
-              {formData.amount && (
-                <div className="bg-blue-50 border border-blue-200 dark:bg-blue-950/30 dark:border-blue-900 rounded-lg p-4">
-                  <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">Estimated Loan Terms</h3>
-                  <div className="space-y-2 text-sm text-blue-800 dark:text-blue-400">
-                    <div className="flex justify-between">
-                      <span>Loan Amount:</span>
-                      <span>{formData.amount}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Estimated Interest Rate:</span>
-                      <span>{estimatedInterest.toFixed(2)}% APR</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Estimated Total Repayment:</span>
-                      <span>{(parseFloat(formData.amount) * (1 + estimatedInterest / 100)).toFixed(4)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Maximum Term:</span>
-                      <span>1 Year</span>
-                    </div>
-                  </div>
+              {parsedAmount > BigInt(0) && (
+                <div
+                  className="bg-blue-50 border border-blue-200 dark:bg-blue-950/30 dark:border-blue-900 rounded-lg p-4"
+                  aria-live="polite"
+                >
+                  <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">Loan Terms</h3>
+                  {exceedsMax ? (
+                    <p className="text-sm text-blue-800 dark:text-blue-400">
+                      Enter an amount within the maximum to see the terms.
+                    </p>
+                  ) : termsError ? (
+                    <p className="text-sm text-blue-800 dark:text-blue-400">
+                      Couldn&apos;t load the loan terms from the contract. They will be set when the loan is approved.
+                    </p>
+                  ) : !terms ? (
+                    <p className="text-sm text-blue-800 dark:text-blue-400">
+                      {termsLoading ? 'Calculating terms…' : 'Loan terms unavailable.'}
+                    </p>
+                  ) : (
+                    <>
+                      <div className="space-y-2 text-sm text-blue-800 dark:text-blue-400">
+                        <div className="flex justify-between">
+                          <span>Loan Amount:</span>
+                          <span>{formatToken(parsedAmount, { displayDecimals: 7 })}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Interest Rate:</span>
+                          <span>{rateDisplay} over the term</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Total Repayment:</span>
+                          <span>{formatToken(terms.totalRepayment, { displayDecimals: 7 })}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Term:</span>
+                          <span>{formatDuration(terms.duration)}</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-blue-700 dark:text-blue-500 mt-2">
+                        Priced by the contract from the current treasury balance and loan policy. Final terms are
+                        fixed when the loan is approved and may differ if either changes.
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -318,9 +341,16 @@ export default function RequestLoanPage() {
                 </div>
 
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Estimated Interest:</span>
-                  <span className="font-medium">{estimatedInterest.toFixed(2)}% APR</span>
+                  <span className="text-muted-foreground">Interest Rate:</span>
+                  <span className="font-medium">{rateDisplay ? `${rateDisplay} over the term` : 'Unavailable'}</span>
                 </div>
+
+                {terms && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Total Repayment:</span>
+                    <span className="font-medium">{formatToken(terms.totalRepayment, { displayDecimals: 7 })}</span>
+                  </div>
+                )}
 
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Supporting Docs:</span>
@@ -338,7 +368,10 @@ export default function RequestLoanPage() {
                 <li>Your loan proposal will be created and enter a 3-day editing phase</li>
                 <li>After editing, members will have 7 days to vote on your proposal</li>
                 <li>If approved by majority consensus, the loan will be automatically disbursed</li>
-                <li>You&apos;ll have up to 1 year to repay the loan with accrued interest</li>
+                <li>
+                  You&apos;ll have {terms ? formatDuration(terms.duration) : 'the policy\'s loan term'} to repay the
+                  loan with interest
+                </li>
               </ol>
             </div>
 

@@ -133,6 +133,16 @@ export function formatThreshold(basisPoints: number): string {
   return pct % 1 === 0 ? `${pct}%` : `${pct.toFixed(2)}%`
 }
 
+// Format a duration in seconds as whole years or days ("1 year", "90 days").
+export function formatDuration(seconds: number): string {
+  const days = Math.round(seconds / 86400)
+  if (days >= 365 && days % 365 === 0) {
+    const years = days / 365
+    return `${years} ${years === 1 ? 'year' : 'years'}`
+  }
+  return `${days} ${days === 1 ? 'day' : 'days'}`
+}
+
 // Calculate percentage for voting results
 export function calculatePercentage(votes: number, totalVotes: number): number {
   if (totalVotes === 0) return 0

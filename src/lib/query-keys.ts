@@ -10,6 +10,7 @@ export const queryKeys = {
   userLoans: (address: Address) => ['userLoans', address] as const,
   userLoansDisabled: () => ['userLoans', null] as const,
   loanPolicy: () => ['loanPolicy'] as const,
+  loanTerms: (amount: bigint) => ['loanTerms', amount.toString()] as const,
   daoStats: () => ['daoStats'] as const,
   daoStatsBackend: () => ['daoStatsBackend'] as const,
   daoEvents: () => ['daoEvents'] as const,

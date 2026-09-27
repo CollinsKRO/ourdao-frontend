@@ -88,6 +88,24 @@ export function resolveLoanPolicy(
   }
 }
 
+/** Terms the contract would set for a loan of a given amount, as priced by
+ *  `calculate_loan_terms` from the live treasury and loan policy. */
+export interface UILoanTerms {
+  /** Flat rate over the whole term, in basis points (not annualised). */
+  interestRate: number
+  totalRepayment: bigint
+  /** Loan duration in seconds. */
+  duration: number
+}
+
+export function mapLoanTerms(raw: Record<string, unknown>): UILoanTerms {
+  return {
+    interestRate: Number(raw.interest_rate ?? 0),
+    totalRepayment: asBigInt(raw.total_repayment),
+    duration: Number(raw.duration ?? 0),
+  }
+}
+
 /** Map the contract's phase+status onto the UI's numeric ProposalStatus. */
 export function loanStatusCode(raw: Record<string, unknown>): number {
   const status = tag(raw.status)

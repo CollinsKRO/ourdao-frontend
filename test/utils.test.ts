@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatFileSize, formatToken, parseToken, formatThreshold } from '@/lib/utils'
+import { formatFileSize, formatToken, parseToken, formatThreshold, formatDuration } from '@/lib/utils'
 
 describe('formatToken', () => {
   it('renders a bare "0" for an exact zero value', () => {
@@ -122,5 +122,17 @@ describe('formatFileSize', () => {
   it('rounds to two decimal places', () => {
     // 1500 bytes = 1.464... KB -> 1.46 KB
     expect(formatFileSize(1500)).toBe('1.46 KB')
+  })
+})
+
+describe('formatDuration', () => {
+  it('formats whole years', () => {
+    expect(formatDuration(365 * 86400)).toBe('1 year')
+    expect(formatDuration(2 * 365 * 86400)).toBe('2 years')
+  })
+
+  it('falls back to days for anything else', () => {
+    expect(formatDuration(90 * 86400)).toBe('90 days')
+    expect(formatDuration(86400)).toBe('1 day')
   })
 })

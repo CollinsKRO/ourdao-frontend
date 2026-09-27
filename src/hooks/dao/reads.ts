@@ -1,13 +1,14 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useWallet } from '@/lib/wallet'
 import { CONTRACT_ID, isContractConfigured } from '@/lib/stellar'
 import { daoRead } from '@/lib/dao-client'
 import { backend } from '@/lib/backend'
 import type { UserData, DAOStats } from '@/types/dao'
-import { asBigInt, resolveLoanPolicy, toLoan, toMemberStatus } from '@/lib/dao-mappers'
-import type { UILoanPolicy } from '@/lib/dao-mappers'
+import { asBigInt, mapLoanTerms, resolveLoanPolicy, toLoan, toMemberStatus } from '@/lib/dao-mappers'
+import type { UILoanPolicy, UILoanTerms } from '@/lib/dao-mappers'
 import { queryKeys } from '@/lib/query-keys'
 import { QUERY_REFRESH_INTERVAL_MS } from '@/constants'
 
@@ -147,6 +148,41 @@ export function useLoanPolicy(): UILoanPolicy {
     },
   })
   return resolveLoanPolicy(data?.policy, data?.threshold)
+}
+
+/** Wait this long after the amount stops changing before pricing it, so
+ *  typing an amount doesn't fire a simulation per keystroke. */
+const LOAN_TERMS_DEBOUNCE_MS = 300
+
+/** The terms the contract would set for a loan of `amount` (stroops), read
+ *  from `calculate_loan_terms`. The rate depends on the amount relative to the
+ *  live treasury, so it can't be derived client-side. Pass null to skip. */
+export function useLoanTerms(amount: bigint | null): {
+  terms: UILoanTerms | null
+  isLoading: boolean
+  isError: boolean
+} {
+  const [debounced, setDebounced] = useState(amount)
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(amount), LOAN_TERMS_DEBOUNCE_MS)
+    return () => clearTimeout(id)
+  }, [amount])
+
+  // Terms for a previous amount must never be shown against the current one.
+  const settled = debounced === amount
+  const enabled = isContractConfigured() && debounced !== null && debounced > BigInt(0)
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: queryKeys.loanTerms(debounced ?? BigInt(0)),
+    enabled,
+    queryFn: async () => mapLoanTerms(await daoRead.calculateLoanTerms(debounced!)),
+  })
+
+  return {
+    terms: settled && enabled && data ? data : null,
+    isLoading: amount !== null && amount > BigInt(0) && (!settled || (enabled && isLoading)),
+    isError: settled && enabled && isError,
+  }
 }
 
 export function useDAOStats(): ExtendedStats {
