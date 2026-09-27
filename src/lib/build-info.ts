@@ -15,9 +15,11 @@
  */
 import { CONTRACT_ID } from '@/lib/stellar'
 
-export const BUILD_VERSION: string = process.env.NEXT_PUBLIC_BUILD_VERSION || '0.0.0-dev'
-export const BUILD_COMMIT: string = process.env.NEXT_PUBLIC_BUILD_COMMIT || ''
-export const BUILD_TIME: string = process.env.NEXT_PUBLIC_BUILD_TIME || ''
+// Module-private: consumed by getBuildInfo only. Not exported — knip flags
+// unused exports (see docs/unused-exports.md).
+const BUILD_VERSION: string = process.env.NEXT_PUBLIC_BUILD_VERSION || '0.0.0-dev'
+const BUILD_COMMIT: string = process.env.NEXT_PUBLIC_BUILD_COMMIT || ''
+const BUILD_TIME: string = process.env.NEXT_PUBLIC_BUILD_TIME || ''
 
 export interface BuildInfo {
   version: string
