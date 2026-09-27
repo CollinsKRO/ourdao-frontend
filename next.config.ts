@@ -10,7 +10,7 @@ import { version } from "./package.json";
  */
 
 function buildImageRemotePatterns() {
-  const ipfsGateways = (process.env.NEXT_PUBLIC_IPFS_GATEWAY || "https://gateway.pinata.cloud/ipfs/")
+  const ipfsGateways = (process.env.NEXT_PUBLIC_IPFS_GATEWAY || "")
     .split(",")
     .map((g) => g.trim())
     .filter(Boolean);
@@ -94,4 +94,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-

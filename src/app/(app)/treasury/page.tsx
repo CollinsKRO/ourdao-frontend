@@ -56,7 +56,7 @@ function TreasuryProposalRow({
             <p className="font-medium text-foreground">{p.title}</p>
             {p.isPrivate && (
               <Badge variant="secondary" className="text-xs">
-                Private
+                Private · voting unavailable until commit-reveal
               </Badge>
             )}
           </div>

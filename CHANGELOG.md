@@ -18,6 +18,15 @@ report can name the entry below it came from. See
 
 ## [Unreleased]
 
+### Fixed
+- Disabled misleading loan document encryption and access-permission controls,
+  clarified that loan and IPFS data are public, and show the submitted amount
+  in the loan review summary (#313).
+- Removed the assumed IPFS gateway default and validate gateway URLs and CIDs
+  before creating document links (#314).
+- Updated private treasury proposal guidance and immediately reflect a
+  successful treasury vote in the current member's vote state (#311, #318).
+
 Backend: ourdao-backend unversioned (main; no tagged release to pin yet)
 Contracts: ourdao-contracts @ 00b0c62
 

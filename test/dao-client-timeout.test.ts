@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { READ_TIMEOUT_MS, WRITE_TIMEOUT_MS, withTimeout } from '@/lib/dao-client'
 
 describe('dao-client timeout utilities', () => {

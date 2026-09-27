@@ -303,6 +303,8 @@ export async function uploadToIPFS(
 // tried in order with a timeout; a timeout, network error or non-2xx response
 // moves on to the next one instead of hanging DocumentViewer.
 async function fetchFromGateways(hash: string): Promise<Response> {
+  if (!validateIPFSHash(hash)) throw new Error('Invalid IPFS content identifier')
+  if (IPFS_GATEWAYS.length === 0) throw new Error('IPFS gateway is not configured')
   let lastError: Error | undefined
   for (const gateway of IPFS_GATEWAYS) {
     try {
@@ -327,6 +329,9 @@ export async function downloadFromIPFS(
 ): Promise<{ content: Uint8Array; decrypted: boolean }> {
   const res = await fetchFromGateways(hash)
   const fileData = new Uint8Array(await res.arrayBuffer())
+  if (!(await verifyDownloadedContent(hash, fileData))) {
+    throw new Error('Downloaded document does not match its IPFS content identifier')
+  }
 
   if (encrypted && password) {
     const content = await decryptBytes(fileData, password)
@@ -344,6 +349,8 @@ export async function downloadFromIPFS(
 
 // Get IPFS URL for direct access
 export function getIPFSUrl(hash: string): string {
+  if (!IPFS_GATEWAY) throw new Error('IPFS gateway is not configured')
+  if (!validateIPFSHash(hash)) throw new Error('Invalid IPFS content identifier')
   return `${IPFS_GATEWAY}${hash}`
 }
 
@@ -360,6 +367,75 @@ export function validateIPFSHash(hash: string): boolean {
   const cidV1Regex = /^[bBfz][0-9A-Za-z]{7,60}$/
 
   return cidV0Regex.test(hash) || cidV1Regex.test(hash)
+}
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
+
+function cidVarint(value: number): Uint8Array {
+  const bytes: number[] = []
+  while (value >= 0x80) {
+    bytes.push((value & 0x7f) | 0x80)
+    value >>>= 7
+  }
+  bytes.push(value)
+  return new Uint8Array(bytes)
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const output = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0))
+  let offset = 0
+  for (const part of parts) {
+    output.set(part, offset)
+    offset += part.length
+  }
+  return output
+}
+
+function encodeBase58(bytes: Uint8Array): string {
+  let value = BigInt(0)
+  for (const byte of bytes) value = (value << BigInt(8)) | BigInt(byte)
+  let result = ''
+  while (value > BigInt(0)) {
+    result = BASE58_ALPHABET[Number(value % BigInt(58))] + result
+    value /= BigInt(58)
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) break
+    result = `1${result}`
+  }
+  return result
+}
+
+function encodeBase32(bytes: Uint8Array): string {
+  let bits = 0
+  let value = 0
+  let result = 'b'
+  for (const byte of bytes) {
+    value = (value << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      result += BASE32_ALPHABET[(value >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  if (bits > 0) result += BASE32_ALPHABET[(value << (5 - bits)) & 31]
+  return result
+}
+
+/** Verify the downloaded bytes against the supported single-block UnixFS CIDs. */
+export async function verifyDownloadedContent(cid: string, content: Uint8Array): Promise<boolean> {
+  if (!validateIPFSHash(cid)) return false
+  const length = cidVarint(content.length)
+  const unixFsData = concatBytes(new Uint8Array([0x08, 0x02, 0x12]), length, content, new Uint8Array([0x18]), length)
+  const encodedData = concatBytes(new Uint8Array([0x0a]), cidVarint(unixFsData.length), unixFsData)
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encodedData as unknown as BufferSource))
+  const multihash = concatBytes(new Uint8Array([0x12, 0x20]), digest)
+  const cidV0 = encodeBase58(multihash)
+  const cidV1 = encodeBase32(concatBytes(new Uint8Array([0x01, 0x70]), multihash))
+  const rawDigest = new Uint8Array(await crypto.subtle.digest('SHA-256', content as unknown as BufferSource))
+  const cidV1Raw = encodeBase32(concatBytes(new Uint8Array([0x01, 0x55, 0x12, 0x20]), rawDigest))
+  return cid === cidV0 || cid.toLowerCase() === cidV1 || cid.toLowerCase() === cidV1Raw
 }
 
 // Generate document metadata

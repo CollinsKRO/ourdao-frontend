@@ -143,6 +143,17 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  const rateLimit = checkRateLimit(req)
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: 'Too many upload requests. Please try again later.' },
+      {
+        status: 429,
+        headers: { 'Retry-After': String(rateLimit.retryAfterSeconds ?? 60) },
+      }
+    )
+  }
+
   const bodyBytes = await readBounded(req)
   if (bodyBytes === null) return tooLarge()
 
@@ -158,7 +169,7 @@ export async function POST(req: NextRequest) {
 
   // 6. Construct form data with Pinata pin metadata (no member PII or IP included)
   const form = new FormData()
-  form.append('file', new Blob([bodyBytes]), 'document')
+  form.append('file', new Blob([bodyBytes as unknown as BlobPart]), 'document')
 
   const metadata = {
     name: `doc-${Date.now()}`,

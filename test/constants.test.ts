@@ -17,9 +17,9 @@ describe('PROPOSAL_STATUS_LABELS', () => {
 })
 
 describe('parseGatewayList', () => {
-  it('falls back to the default gateway when unset or blank', () => {
-    expect(parseGatewayList(undefined)).toEqual(['https://gateway.pinata.cloud/ipfs/'])
-    expect(parseGatewayList(' , ')).toEqual(['https://gateway.pinata.cloud/ipfs/'])
+  it('returns no gateways when unset or blank', () => {
+    expect(parseGatewayList(undefined)).toEqual([])
+    expect(parseGatewayList(' , ')).toEqual([])
   })
   it('keeps a single gateway, normalising the trailing slash', () => {
     expect(parseGatewayList('https://a.example/ipfs')).toEqual(['https://a.example/ipfs/'])

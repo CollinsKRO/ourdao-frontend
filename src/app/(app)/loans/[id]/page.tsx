@@ -568,7 +568,7 @@ export default function LoanDetailsPage() {
                         </p>
                       </div>
                     </div>
-                    <a
+                    {IPFS_GATEWAY && <a
                       href={`${IPFS_GATEWAY}${documentCid}`}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -577,7 +577,7 @@ export default function LoanDetailsPage() {
                         <EyeIcon className="mr-2 h-4 w-4" />
                         View
                       </Button>
-                    </a>
+                    </a>}
                   </div>
                 ) : (
                   <div className="space-y-3">

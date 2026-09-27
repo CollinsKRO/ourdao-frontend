@@ -4,12 +4,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   useMemberRegistration,
   useVoting,
+  useTreasuryVoting,
   useStaking,
   useAttachDocument,
 } from '@/hooks/useDAO'
 
 const mockRegisterMember = vi.fn()
 const mockVoteOnLoanProposal = vi.fn()
+const mockVoteOnTreasuryProposal = vi.fn()
 const mockStake = vi.fn()
 const mockAttachDocument = vi.fn()
 
@@ -28,6 +30,7 @@ vi.mock('@/lib/dao-client', async (importOriginal) => {
     daoWrite: () => ({
       registerMember: (...args: unknown[]) => mockRegisterMember(...args),
       voteOnLoanProposal: (...args: unknown[]) => mockVoteOnLoanProposal(...args),
+      voteOnTreasuryProposal: (...args: unknown[]) => mockVoteOnTreasuryProposal(...args),
       stake: (...args: unknown[]) => mockStake(...args),
       attachDocument: (...args: unknown[]) => mockAttachDocument(...args),
     }),
@@ -202,6 +205,26 @@ describe('write-hook query invalidation', () => {
     rejectVote(new Error('NotEligible'))
     await expect(vote).rejects.toThrow('NotEligible')
     expect(client.getQueryData(['hasVoted', 'Loan', 7, 'GALICE'])).toBe(false)
+  })
+
+  it('marks treasury votes optimistically for the connected member and rolls back on failure', async () => {
+    let rejectVote: (error: Error) => void = () => {}
+    mockVoteOnTreasuryProposal.mockReturnValue(
+      new Promise((_, reject) => {
+        rejectVote = reject
+      })
+    )
+    const client = makeClient()
+    client.setQueryData(['hasVoted', 'Treasury', 12, 'GALICE'], false)
+
+    let latest: ReturnType<typeof useTreasuryVoting> | undefined
+    renderWithClient(client, useTreasuryVoting, (h) => { latest = h })
+    const vote = latest!.voteOnTreasury(12, true)
+
+    await waitFor(() => expect(client.getQueryData(['hasVoted', 'Treasury', 12, 'GALICE'])).toBe(true))
+    rejectVote(new Error('NotEligible'))
+    await expect(vote).rejects.toThrow('NotEligible')
+    expect(client.getQueryData(['hasVoted', 'Treasury', 12, 'GALICE'])).toBe(false)
   })
 
   it('staking invalidates the connected address\'s own stake, its voting weight, and daoStats', async () => {

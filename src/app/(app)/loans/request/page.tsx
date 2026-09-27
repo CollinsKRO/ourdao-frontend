@@ -9,7 +9,6 @@ import {
   BanknotesIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
-  LockClosedIcon,
   DocumentIcon
 } from '@heroicons/react/24/outline'
 import { useDAOStats, useUserData, useLoanRequest, useAttachDocument, useLoanTerms } from '@/hooks/useDAO'
@@ -231,6 +230,10 @@ export default function RequestLoanPage() {
               </p>
             </div>
 
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300" role="note">
+              Loan amounts and proposal details are public on the Stellar ledger. Supporting documents are stored on public IPFS and anyone with the content link can read them. Do not upload sensitive information.
+            </p>
+
             {stats.features.documentStorage ? (
               <div className="space-y-6">
                 {/* Document Upload Toggle */}
@@ -253,6 +256,8 @@ export default function RequestLoanPage() {
                     multiple
                     accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png"
                     maxSize={5}
+                    allowEncryption={false}
+                    showPermissions={false}
                     onUpload={(documents) => {
                       setUploadedDocuments(documents)
                       // Update document hash with first document's hash
@@ -277,9 +282,6 @@ export default function RequestLoanPage() {
                           <div className="flex items-center space-x-2">
                             <DocumentIcon className="h-4 w-4 text-muted-foreground" />
                             <span className="text-sm text-foreground">{doc.name}</span>
-                            {doc.encrypted && (
-                              <LockClosedIcon className="h-3 w-3 text-blue-500 dark:text-blue-400" title="Encrypted" />
-                            )}
                           </div>
                           <span className="text-xs text-muted-foreground">
                             {(doc.size / 1024).toFixed(1)} KB
@@ -337,7 +339,7 @@ export default function RequestLoanPage() {
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Requested Amount:</span>
-                  <span className="font-medium">{formData.amount}</span>
+                  <span className="font-medium">{formatToken(parseToken(formData.amount), { displayDecimals: 7 })}</span>
                 </div>
 
                 <div className="flex justify-between">

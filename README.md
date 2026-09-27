@@ -65,7 +65,7 @@ All config is env-driven with public-testnet defaults (see `.env.example`):
 | `NEXT_PUBLIC_CONTRACT_ID` | Deployed OurDAO contract id (`C…`) | _(empty → read-only "not configured")_ |
 | `NEXT_PUBLIC_SOROBAN_RPC_URL` | Soroban RPC endpoint | `https://soroban-testnet.stellar.org` |
 | `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Network passphrase | testnet |
-| `NEXT_PUBLIC_IPFS_GATEWAY` | Gateway(s) for reading document content hashes (no credential needed); comma-separate several to fall back in order | Pinata |
+| `NEXT_PUBLIC_IPFS_GATEWAY` | Gateway(s) for reading document content hashes (no credential needed); comma-separate several to fall back in order | _(empty → downloads disabled)_ |
 | `PINATA_JWT` | **Server-only** Pinata credential for pinning uploaded documents — read by `src/app/api/documents/route.ts`, never exposed to the client | _(empty → uploads fail with a visible error)_ |
 | `NEXT_PUBLIC_BACKEND_URL` | [`ourdao-backend`](https://github.com/ourdao/ourdao-backend) indexer/API (loan history, notifications, admin log, events) | _(empty → on-chain-only, no backend)_ — set to `http://localhost:4000` for local dev (see `.env.example`)_ |
 | `NEXT_PUBLIC_SITE_URL` | Public site origin, no trailing slash — used as `metadataBase` so Open Graph/Twitter image URLs resolve to an absolute address | `http://localhost:3000` |
@@ -354,11 +354,11 @@ from [#238](https://github.com/ourdao/ourdao-frontend/issues/238) is in
 
 ## What's real vs. not
 
-Most of the app is wired to the live contract + backend: registration, loan request/vote/repay, treasury propose/vote, staking, name registry, commit-reveal private voting, document content-hash attachment, notifications, admin actions (pause/unpause, add/remove admin, set consensus threshold), an admin/governance audit log, and loan defaults — `markLoanDefaulted` is exposed in `dao-client.ts`, and the dashboard's Recent Activity feed labels every real event (including `loan_dflt`) instead of a generic placeholder. The loan detail page (`/loans/[id]`) reads the contract's real disbursed `Loan` (via `useLoan`) once a proposal is approved — actual status, due date, and outstanding balance, not proposal-status guesswork that never reflected repayment or default.
+Most of the app is wired to the live contract + backend: registration, loan request/vote/repay, treasury propose/vote, staking, name registry, public voting, document content-hash attachment, notifications, admin actions (pause/unpause, add/remove admin, set consensus threshold), an admin/governance audit log, and loan defaults — `markLoanDefaulted` is exposed in `dao-client.ts`, and the dashboard's Recent Activity feed labels every real event (including `loan_dflt`) instead of a generic placeholder. Private treasury proposals remain unvotable until commit-reveal voting is implemented; the create form disables that option, and existing private proposals are marked accordingly. The loan detail page (`/loans/[id]`) reads the contract's real disbursed `Loan` (via `useLoan`) once a proposal is approved — actual status, due date, and outstanding balance, not proposal-status guesswork that never reflected repayment or default.
 
 For the full matrix of what works, what degrades, and what a member sees in each configuration combination, see [docs/degradation-matrix.md](docs/degradation-matrix.md).
 
-**IPFS document storage** (`src/lib/ipfs.ts`) is also real now: AES-GCM encryption happens client-side exactly as before, then the ciphertext is posted to a Next.js route handler (`src/app/api/documents/route.ts`) that pins it to Pinata using a server-only credential (`PINATA_JWT`) — the plaintext and the credential both stay off the client bundle. Downloads read straight from the public gateway (`NEXT_PUBLIC_IPFS_GATEWAY`), no credential needed.
+**IPFS document storage** (`src/lib/ipfs.ts`) uses a Next.js route handler (`src/app/api/documents/route.ts`) to pin bytes to Pinata using a server-only credential (`PINATA_JWT`). Uploads fail explicitly when pinning is unconfigured or the provider returns an invalid or mismatched CID. Downloads require an explicitly configured public gateway (`NEXT_PUBLIC_IPFS_GATEWAY`); the app does not assume a provider default. Loan amounts and proposal details are public on-chain, and IPFS documents are public to anyone with their CID; document uploads do not provide access control or confidentiality.
 
 `tsc --noEmit` is fully clean and enforced in CI. `next.config.ts` no longer sets `typescript.ignoreBuildErrors` — `next build` now fails on type errors just like the CI `typecheck` gate (the `eslint.ignoreDuringBuilds` counterpart was removed outright in the Next 16 upgrade — that config key no longer exists).
 
@@ -410,4 +410,3 @@ Found a security vulnerability? See [SECURITY.md](./SECURITY.md) for responsible
 ## License
 
 MIT
-

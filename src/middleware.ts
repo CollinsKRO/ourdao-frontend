@@ -39,7 +39,7 @@ function generateNonce(): string {
 function buildCspWithNonce(nonce: string): string {
   const rpcUrl = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000'
-  const ipfsGateways = (process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.pinata.cloud/ipfs/')
+  const ipfsGateways = (process.env.NEXT_PUBLIC_IPFS_GATEWAY || '')
     .split(',')
     .map((g) => g.trim())
     .filter(Boolean)

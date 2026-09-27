@@ -376,6 +376,11 @@ export function useTreasuryVoting() {
       // The treasury proposal list is fed by the indexer aggregate, so a vote
       // that moves a proposal toward execution has to invalidate it too (#308).
       queryKeys.backendStats(),
+    ], [
+      {
+        queryKey: queryKeys.hasVoted('Treasury', proposalId, address!),
+        update: () => support,
+      },
     ])
   return { voteOnTreasury, isPending, isSuccess, error, cancelSignature }
 }

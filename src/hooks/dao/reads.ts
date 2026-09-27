@@ -175,7 +175,11 @@ export function useLoanTerms(amount: bigint | null): {
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.loanTerms(debounced ?? BigInt(0)),
     enabled,
-    queryFn: async () => mapLoanTerms(await daoRead.calculateLoanTerms(debounced!)),
+    queryFn: async () => {
+      const raw = await daoRead.calculateLoanTerms(debounced!)
+      if (!raw) throw new Error('Loan terms are unavailable')
+      return mapLoanTerms(raw)
+    },
   })
 
   return {
