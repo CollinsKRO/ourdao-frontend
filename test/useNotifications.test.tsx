@@ -2,15 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, waitFor, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useAutoNotifications, useActivityFeed } from '@/hooks/useNotifications'
-import type { BackendEvent, BackendNotification } from '@/lib/backend'
+import type { BackendEvent, BackendNotification, MutationResult } from '@/lib/backend'
 
 const mockGetNotifications = vi.fn()
 const mockMarkNotificationRead = vi.fn()
 const mockMarkAllNotificationsRead = vi.fn()
 const mockGetEvents = vi.fn()
+const mockSignMessage = vi.fn()
+const mockToastError = vi.fn()
+
+// The connected address is a mutable binding so a test can simulate a wallet
+// switch and assert read state does not follow it across accounts (#306).
+let mockAddress: string | null = 'GALICE'
 
 vi.mock('@/lib/wallet', () => ({
-  useWallet: () => ({ address: 'GALICE', isConnected: true }),
+  useWallet: () => ({ address: mockAddress, isConnected: !!mockAddress, signMessage: mockSignMessage }),
 }))
 
 vi.mock('@/lib/backend', () => ({
@@ -20,6 +26,10 @@ vi.mock('@/lib/backend', () => ({
     markAllNotificationsRead: (...args: unknown[]) => mockMarkAllNotificationsRead(...args),
     getEvents: (...args: unknown[]) => mockGetEvents(...args),
   },
+}))
+
+vi.mock('react-hot-toast', () => ({
+  default: { error: (...args: unknown[]) => mockToastError(...args) },
 }))
 
 function Harness({ onRender }: { onRender: (hook: ReturnType<typeof useAutoNotifications>) => void }) {
@@ -50,11 +60,22 @@ const notif = (over: Partial<BackendNotification> = {}): BackendNotification => 
   ...over,
 })
 
+const ok: MutationResult = { ok: true, status: 200 }
+const fail = (message: string, reason: 'unauthorized' | 'rejected' | 'unavailable' = 'unauthorized'): MutationResult => ({
+  ok: false,
+  status: 401,
+  reason,
+  message,
+})
+
 describe('useAutoNotifications', () => {
   beforeEach(() => {
+    mockAddress = 'GALICE'
     mockGetNotifications.mockReset().mockResolvedValue([])
-    mockMarkNotificationRead.mockReset().mockResolvedValue(true)
-    mockMarkAllNotificationsRead.mockReset().mockResolvedValue(true)
+    mockMarkNotificationRead.mockReset().mockResolvedValue(ok)
+    mockMarkAllNotificationsRead.mockReset().mockResolvedValue(ok)
+    mockSignMessage.mockReset().mockResolvedValue('c2ln')
+    mockToastError.mockReset()
   })
   afterEach(() => vi.clearAllMocks())
 
@@ -74,10 +95,10 @@ describe('useAutoNotifications', () => {
     await waitFor(() => expect(latest?.notifications).toHaveLength(1))
 
     await act(async () => {
-      latest!.markAsRead('5')
+      await latest!.markAsRead('5')
     })
 
-    await waitFor(() => expect(mockMarkNotificationRead).toHaveBeenCalledWith(5))
+    await waitFor(() => expect(mockMarkNotificationRead).toHaveBeenCalledWith(5, expect.objectContaining({ address: 'GALICE' })))
   })
 
   it('markAllAsRead calls the backend with the connected address', async () => {
@@ -87,10 +108,10 @@ describe('useAutoNotifications', () => {
     await waitFor(() => expect(latest?.notifications).toHaveLength(2))
 
     await act(async () => {
-      latest!.markAllAsRead()
+      await latest!.markAllAsRead()
     })
 
-    await waitFor(() => expect(mockMarkAllNotificationsRead).toHaveBeenCalledWith('GALICE'))
+    await waitFor(() => expect(mockMarkAllNotificationsRead).toHaveBeenCalledWith('GALICE', expect.objectContaining({ address: 'GALICE' })))
   })
 
   it('removeNotification filters the notification out client-side', async () => {
@@ -104,6 +125,151 @@ describe('useAutoNotifications', () => {
     })
 
     await waitFor(() => expect(latest?.notifications.map((n) => n.id)).toEqual(['2']))
+  })
+
+  describe('a write that does not land (#306)', () => {
+    // The old code flipped read state locally and never checked the result, so
+    // a 401 looked like success until the next reload put every notification
+    // back to unread.
+    it('rolls the optimistic read state back and reports a 401', async () => {
+      mockGetNotifications.mockResolvedValue([notif({ id: 5, read: false })])
+      mockMarkNotificationRead.mockResolvedValue(fail('Invalid or expired nonce'))
+      let latest: ReturnType<typeof useAutoNotifications> | undefined
+      renderWithClient((hook) => { latest = hook })
+      await waitFor(() => expect(latest?.notifications).toHaveLength(1))
+
+      await act(async () => {
+        await latest!.markAsRead('5')
+      })
+
+      await waitFor(() => expect(latest?.notifications[0].read).toBe(false))
+      expect(latest?.unreadCount).toBe(1)
+      expect(mockToastError).toHaveBeenCalledWith('Invalid or expired nonce')
+    })
+
+    it('rolls back a rejected signature prompt rather than showing a silent success', async () => {
+      mockGetNotifications.mockResolvedValue([notif({ id: 7, read: false })])
+      mockMarkNotificationRead.mockResolvedValue(fail('Signature rejected', 'rejected'))
+      let latest: ReturnType<typeof useAutoNotifications> | undefined
+      renderWithClient((hook) => { latest = hook })
+      await waitFor(() => expect(latest?.notifications).toHaveLength(1))
+
+      await act(async () => {
+        await latest!.markAsRead('7')
+      })
+
+      await waitFor(() => expect(latest?.notifications[0].read).toBe(false))
+      expect(mockToastError).toHaveBeenCalledWith('Signature rejected')
+    })
+
+    it('rolls back every optimistic read when mark-all is rejected', async () => {
+      mockGetNotifications.mockResolvedValue([notif({ id: 1 }), notif({ id: 2 }), notif({ id: 3 })])
+      mockMarkAllNotificationsRead.mockResolvedValue(fail('Unauthorized', 'unauthorized'))
+      let latest: ReturnType<typeof useAutoNotifications> | undefined
+      renderWithClient((hook) => { latest = hook })
+      await waitFor(() => expect(latest?.unreadCount).toBe(3))
+
+      await act(async () => {
+        await latest!.markAllAsRead()
+      })
+
+      await waitFor(() => expect(latest?.unreadCount).toBe(3))
+      expect(mockToastError).toHaveBeenCalledWith('Unauthorized')
+    })
+
+    it('does not report a failure when the write succeeds', async () => {
+      mockGetNotifications.mockResolvedValue([notif({ id: 5, read: false })])
+      let latest: ReturnType<typeof useAutoNotifications> | undefined
+      renderWithClient((hook) => { latest = hook })
+      await waitFor(() => expect(latest?.notifications).toHaveLength(1))
+
+      await act(async () => {
+        await latest!.markAsRead('5')
+      })
+
+      await waitFor(() => expect(latest?.notifications[0].read).toBe(true))
+      expect(mockToastError).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('state is scoped to the address that owns it (#306)', () => {
+    it('does not carry read state to a different wallet', async () => {
+      mockGetNotifications.mockImplementation(async (address: string) =>
+        address === 'GALICE' ? [notif({ id: 1, address: 'GALICE' })] : [notif({ id: 1, address: 'GBOB', read: false })]
+      )
+      let latest: ReturnType<typeof useAutoNotifications> | undefined
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      const { rerender } = render(
+        <QueryClientProvider client={client}>
+          <Harness onRender={(hook) => { latest = hook }} />
+        </QueryClientProvider>
+      )
+      await waitFor(() => expect(latest?.unreadCount).toBe(1))
+
+      await act(async () => {
+        await latest!.markAsRead('1')
+      })
+      await waitFor(() => expect(latest?.unreadCount).toBe(0))
+
+      // Switch accounts: the new address's notification is unread on the
+      // backend too, and must not inherit GALICE's optimistic read.
+      await act(async () => {
+        mockAddress = 'GBOB'
+        rerender(
+          <QueryClientProvider client={client}>
+            <Harness onRender={(hook) => { latest = hook }} />
+          </QueryClientProvider>
+        )
+      })
+
+      await waitFor(() => expect(latest?.unreadCount).toBe(1))
+      expect(latest?.notifications[0].read).toBe(false)
+    })
+
+    it('restores the previous wallet\'s own read state when switching back', async () => {
+      mockGetNotifications.mockImplementation(async (address: string) => [notif({ id: 1, address })])
+      let latest: ReturnType<typeof useAutoNotifications> | undefined
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      const tree = () => (
+        <QueryClientProvider client={client}>
+          <Harness onRender={(hook) => { latest = hook }} />
+        </QueryClientProvider>
+      )
+      mockAddress = 'GALICE'
+      const { rerender } = render(tree())
+      await waitFor(() => expect(latest?.unreadCount).toBe(1))
+
+      await act(async () => {
+        await latest!.markAsRead('1')
+      })
+      await waitFor(() => expect(latest?.unreadCount).toBe(0))
+
+      await act(async () => {
+        mockAddress = 'GBOB'
+        rerender(tree())
+      })
+      await waitFor(() => expect(latest?.unreadCount).toBe(1))
+
+      await act(async () => {
+        mockAddress = 'GALICE'
+        rerender(tree())
+      })
+      await waitFor(() => expect(latest?.unreadCount).toBe(0))
+    })
+
+    it('does nothing at all when no wallet is connected', async () => {
+      mockAddress = null
+      let latest: ReturnType<typeof useAutoNotifications> | undefined
+      renderWithClient((hook) => { latest = hook })
+
+      await act(async () => {
+        await latest!.markAsRead('1')
+        await latest!.markAllAsRead()
+      })
+
+      expect(mockMarkNotificationRead).not.toHaveBeenCalled()
+      expect(mockMarkAllNotificationsRead).not.toHaveBeenCalled()
+    })
   })
 })
 

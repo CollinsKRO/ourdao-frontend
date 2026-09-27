@@ -13,7 +13,9 @@ import {
   CheckCircleIcon,
 } from '@heroicons/react/24/outline'
 import { useDAOStats, useUserData, useMemberRegistration } from '@/hooks/useDAO'
+import { useRedirectIfMember } from '@/hooks/useRequireMember'
 import { formatToken } from '@/lib/utils'
+import { CardSkeleton } from '@/components/ui/skeleton'
 import toast from 'react-hot-toast'
 import { MAIN_CONTENT_ID } from '@/lib/a11y'
 
@@ -30,14 +32,12 @@ export default function RegisterPage() {
   const [step, setStep] = useState(1)
   const maxSteps = 2
 
-  useEffect(() => {
-    // Mirror of the dashboard's redirect (#69) — wait for the membership
-    // read to settle so a member mid-registration-flow-check isn't bounced
-    // to /dashboard based on the still-loading default.
-    if (userData.isConnected && !userData.isLoading && userData.isMember) {
-      router.push('/dashboard')
-    }
-  }, [userData.isConnected, userData.isLoading, userData.isMember, router])
+  // The mirror of the dashboard's guard, for the same reason (#307): wait for
+  // the wallet to finish restoring and the membership read to settle before
+  // deciding this visitor is already a member. Otherwise a hard refresh on
+  // /register could send a connected member to /dashboard, or leave a
+  // just-registered member staring at the form until a manual reload.
+  const { isResolving } = useRedirectIfMember('/dashboard', userData)
 
   useEffect(() => {
     if (isSuccess) {
@@ -59,7 +59,20 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (!userData.isConnected) {
+  // Don't show "Connect Your Wallet" until the restore attempt has settled —
+  // during the window it would read true for a wallet that is in fact connected
+  // (#307).
+  if (isResolving) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background to-blue-50 dark:from-background dark:to-blue-950/20 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <CardSkeleton />
+        </div>
+      </div>
+    )
+  }
+
+  if (!userData.isConnected) {
       toast.error('Please connect your wallet first')
       return
     }

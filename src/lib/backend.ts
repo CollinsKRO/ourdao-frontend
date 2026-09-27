@@ -13,7 +13,17 @@
  * BackendError. TanStack Query surfaces that as `isError` on the hook, and the
  * consumer renders a "couldn't load" state — an unreachable indexer and an
  * empty loan list must not look the same to a member.
+ *
+ * Writes are a different story: they need a signed `StellarSignature` header
+ * (see ./backend-auth.ts for the handshake), and they report a typed outcome
+ * instead of a bare boolean so a rejected signature or a 401 rolls the caller's
+ * optimistic state back rather than leaving the UI claiming a change the backend
+ * never made (#306).
  */
+import { AuthError, buildAuthHeader, requestSignedAuth, type AuthFailureReason, type AuthSigner, type SignedAuth } from './backend-auth'
+import { BACKEND_URL, isBackendConfigured } from './backend-config'
+
+export { BACKEND_URL, isBackendConfigured }
 
 /** A configured backend could not be read (network failure or non-2xx). */
 export class BackendError extends Error {
@@ -24,10 +34,6 @@ export class BackendError extends Error {
     this.status = status
   }
 }
-
-export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || ''
-
-export const isBackendConfigured = (): boolean => !!process.env.NEXT_PUBLIC_BACKEND_URL
 
 // --- Response shapes (mirror ourdao-backend/src/types.ts as of commit 7620d26; amounts are strings) ---
 
@@ -183,7 +189,7 @@ const arrayOf =
 // None of these fetches set a timeout or abort signal, so a hung indexer leaves
 // a request pending indefinitely instead of degrading to the on-chain-only state.
 
-async function get<T>(path: string, fallback: T): Promise<T> {
+async function get<T>(path: string, fallback: T, validate?: Validator<T>): Promise<T> {
   // Preview mode: nothing to read from, so the empty fallback is the truth.
   if (!isBackendConfigured()) return fallback
   const base = process.env.NEXT_PUBLIC_BACKEND_URL || ''
@@ -201,28 +207,153 @@ async function get<T>(path: string, fallback: T): Promise<T> {
     )
   }
   if (!res.ok) throw new BackendError(`Backend responded ${res.status}`, res.status)
-  return (await res.json()) as T
+  const body: unknown = await res.json()
+  // Every call site passes a validator; it was previously accepted as a third
+  // argument and then dropped on the floor, so a drifted response shape was
+  // cast straight into the caller's type (#306). Rejecting it here means the
+  // consumer's `isError` state can stand in for "the indexer changed shape"
+  // instead of rendering half-parsed rows.
+  if (validate && !validate(body)) {
+    throw new BackendError(`Backend response for ${path} did not match the expected shape`)
+  }
+  return body as T
 }
 
-/** PATCH with no body. Returns whether the backend accepted the mutation. */
-async function patch(path: string): Promise<boolean> {
-  if (!isBackendConfigured()) return false
-  const base = process.env.NEXT_PUBLIC_BACKEND_URL || ''
-  try {
-    const res = await fetch(`${base}${path}`, { method: 'PATCH' })
-    return res.ok
-  } catch {
-    return false
+// --- Authenticated mutation helper -------------------------------------------
+
+/** Why a write did not land. Distinguishes "you can fix this" from "you can't". */
+export type MutationFailureReason =
+  /** The signed header was missing, invalid, or its nonce was spent/expired. */
+  | 'unauthorized'
+  /** Authenticated, but not permitted to touch this resource (another address's). */
+  | 'forbidden'
+  /** This address can never authenticate against the backend (a `C…` account). */
+  | 'unsupported-address'
+  /** The member declined the signature prompt, or no prompt was possible. */
+  | 'rejected'
+  /** Backend unreachable, rate-limited, or otherwise not answering. */
+  | 'unavailable'
+
+/**
+ * The outcome of a backend write. `ok: false` always carries a
+ * member-facing `message` — a mutation must never fail silently, because the
+ * caller's optimistic state has to be rolled back and the member told why.
+ */
+export type MutationResult =
+  | { ok: true; status: number }
+  | { ok: false; status: number | null; reason: MutationFailureReason; message: string }
+
+/** The failure arm of {@link MutationResult}, named so callers can accept just
+ *  the case they handle. */
+export type MutationFailure = Extract<MutationResult, { ok: false }>
+
+/** Fold a handshake failure into the mutation vocabulary. A challenge that
+ *  could not be issued or came back unusable is the backend being unable to
+ *  serve us, not the member having done anything wrong. */
+function reasonFromAuth(reason: AuthFailureReason): MutationFailureReason {
+  switch (reason) {
+    case 'unsupported-address':
+      return 'unsupported-address'
+    case 'rejected':
+      return 'rejected'
+    case 'challenge-rejected':
+    case 'challenge-unavailable':
+      return 'unavailable'
   }
+}
+
+/** Map a non-2xx response onto a typed reason, using the backend's own error
+ *  string when it sends one (its error envelope is always `{ error, ... }`). */
+async function classifyFailure(res: Response): Promise<MutationResult> {
+  const body = (await res.json().catch(() => null)) as { error?: unknown } | null
+  const detail = typeof body?.error === 'string' && body.error ? body.error : null
+  const reason: MutationFailureReason =
+    res.status === 401
+      ? 'unauthorized'
+      : res.status === 403
+        ? 'forbidden'
+        : res.status === 400
+          ? 'unsupported-address'
+          : 'unavailable'
+  return {
+    ok: false,
+    status: res.status,
+    reason,
+    message:
+      detail ??
+      (reason === 'unauthorized'
+        ? 'The backend rejected this signature. It may have expired — please try again.'
+        : `The backend responded ${res.status}`),
+  }
+}
+
+/**
+ * PATCH with no body, authenticated by a freshly signed challenge.
+ *
+ * Returns a typed {@link MutationResult} rather than a boolean: the previous
+ * `res.ok`-only version could not distinguish "the member rejected the
+ * signature" from "the backend 401'd" from "the backend was down", so every
+ * caller had to assume success and leave its optimistic state in place (#306).
+ */
+async function patch(path: string, signer: AuthSigner): Promise<MutationResult> {
+  if (!isBackendConfigured()) {
+    return {
+      ok: false,
+      status: null,
+      reason: 'unavailable',
+      message: 'No backend is configured, so this change cannot be saved.',
+    }
+  }
+
+  let auth: SignedAuth
+  try {
+    auth = await requestSignedAuth(signer)
+  } catch (err) {
+    if (err instanceof AuthError) {
+      return { ok: false, status: err.status, reason: reasonFromAuth(err.reason), message: err.message }
+    }
+    return {
+      ok: false,
+      status: null,
+      reason: 'rejected',
+      message: err instanceof Error ? err.message : 'Could not obtain a signature.',
+    }
+  }
+
+  const base = process.env.NEXT_PUBLIC_BACKEND_URL || ''
+  let res: Response
+  try {
+    res = await fetch(`${base}${path}`, {
+      method: 'PATCH',
+      headers: {
+        // Must match the backend's `extractAuthHeaders` exactly: the scheme
+        // prefix, then three colon-separated fields.
+        Authorization: buildAuthHeader(auth),
+      },
+      cache: 'no-store',
+    })
+  } catch (cause) {
+    return {
+      ok: false,
+      status: null,
+      reason: 'unavailable',
+      message: `Could not reach the backend: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+    }
+  }
+  if (!res.ok) return classifyFailure(res)
+  return { ok: true, status: res.status }
 }
 
 // --- Endpoints --------------------------------------------------------------
 
 export const backend = {
   isConfigured: isBackendConfigured,
-  getStats: () => get<BackendStats | null>('/api/stats', null, (value): value is BackendStats | null =>
-    value === null || isBackendStats(value)
-  ),
+  getStats: () =>
+    get<BackendStats | null>('/api/stats', null, (value): value is BackendStats | null =>
+      value === null || isBackendStats(value)
+    ),
 
   getLoans: (borrower?: string) =>
     get<BackendLoan[]>(
@@ -231,9 +362,10 @@ export const backend = {
       arrayOf(isBackendLoan)
     ),
 
-  getLoan: (id: number) => get<BackendLoan | null>(`/api/loans/${id}`, null, (value): value is BackendLoan | null =>
-    value === null || isBackendLoan(value)
-  ),
+  getLoan: (id: number) =>
+    get<BackendLoan | null>(`/api/loans/${id}`, null, (value): value is BackendLoan | null =>
+      value === null || isBackendLoan(value)
+    ),
 
   getNotifications: (address: string, limit = 50) =>
     get<BackendNotification[]>(
@@ -254,8 +386,9 @@ export const backend = {
   getAdminLog: (limit = 50) =>
     get<BackendEvent[]>(`/api/admin/log?limit=${limit}`, [], arrayOf(isBackendEvent)),
 
-  markNotificationRead: (id: number) => patch(`/api/notifications/${id}/read`),
+  markNotificationRead: (id: number, signer: AuthSigner) =>
+    patch(`/api/notifications/${id}/read`, signer),
 
-  markAllNotificationsRead: (address: string) =>
-    patch(`/api/notifications/read-all?address=${encodeURIComponent(address)}`),
+  markAllNotificationsRead: (address: string, signer: AuthSigner) =>
+    patch(`/api/notifications/read-all?address=${encodeURIComponent(address)}`, signer),
 }

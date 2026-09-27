@@ -10,6 +10,7 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import { uploadMultipleDocuments, DocumentMetadata } from '@/lib/ipfs'
+import { formatFileSize } from '@/lib/utils'
 
 interface DocumentUploadProps {
   onUpload?: (documents: DocumentMetadata[]) => void
@@ -113,17 +114,21 @@ export default function DocumentUpload({
         wallet
       )
 
-      // Apply permissions to metadata
-      const documentsWithPermissions = uploadedDocuments.map(doc => ({
+      // Apply permissions to metadata. Unencrypted uploads are always public:
+      // there is nothing to reveal to the permission set, and leaving
+      // `permissions` undefined marks them closed-by-default (see ipfs.ts).
+      const documentsWithPermissions = uploadedDocuments.map((doc) => ({
         ...doc,
-        permissions: encrypt ? {
-          public: permissions.public,
-          allowedUsers: permissions.allowedUsers,
-          allowedRoles: permissions.allowedRoles
-        }
-      )
+        permissions: encrypt
+          ? {
+              public: permissions.public,
+              allowedUsers: permissions.allowedUsers,
+              allowedRoles: permissions.allowedRoles,
+            }
+          : undefined,
+      }))
 
-      onUpload?.(uploadedDocuments)
+      onUpload?.(documentsWithPermissions)
       setFiles([])
       setPassword('')
       setUploadProgress(0)

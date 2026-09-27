@@ -22,6 +22,9 @@ vi.mock('@/lib/stellar', () => ({
   CONTRACT_ID: mockContractId,
   NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
   isContractConfigured: () => true,
+  // TransactionPendingError carries this so a member can verify a late
+  // confirmation themselves instead of being told to guess.
+  getTransactionUrl: (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`,
   server: {
     getAccount: (...a: unknown[]) => mockGetAccount(...a),
     prepareTransaction: (...a: unknown[]) => mockPrepareTransaction(...a),
@@ -31,7 +34,9 @@ vi.mock('@/lib/stellar', () => ({
 }))
 
 // Imported after the mock so `invoke` picks up the mocked `server`.
-const { invoke, InvokeError } = await import('@/lib/dao-client')
+const { invoke, InvokeError, TransactionPendingError, watchTransaction } = await import(
+  '@/lib/dao-client'
+)
 
 const WALLET = Keypair.random().publicKey()
 // A no-op "signer" — invoke() never inspects the signature itself, only
@@ -85,20 +90,68 @@ describe('invoke()', () => {
     expect(mockGetTransaction).not.toHaveBeenCalled()
   })
 
-  it('TRY_AGAIN_LATER: throws its own message immediately, not the NOT_FOUND poll message', async () => {
+  it('TRY_AGAIN_LATER: resubmits with a fresh transaction instead of erroring on the first refusal', async () => {
+    // #309: the old code threw on the first TRY_AGAIN_LATER, making the member
+    // click again for a condition the client can just wait out. Nothing was
+    // queued, so there is nothing to poll and nothing to double-apply.
+    mockSendTransaction
+      .mockResolvedValueOnce({ status: 'TRY_AGAIN_LATER', hash: 'hash-busy-1' })
+      .mockResolvedValueOnce({ status: 'PENDING', hash: 'hash-busy-2' })
+    mockGetTransaction.mockResolvedValue({ status: 'SUCCESS', returnValue: undefined })
+
+    const promise = invoke(WALLET, signXDR, 'register_member')
+    await vi.advanceTimersByTimeAsync(2_000)
+    const result = await promise
+
+    // The successful attempt is the one whose hash gets confirmed and returned.
+    expect(result.hash).toBe('hash-busy-2')
+    expect(mockGetTransaction).toHaveBeenCalledWith('hash-busy-2')
+  })
+
+  it('TRY_AGAIN_LATER: each resubmission re-reads the account for a fresh sequence number', async () => {
+    // Resending the previously signed transaction would be rejected with a
+    // bad-sequence error instead of being accepted once congestion clears, so
+    // a retry has to rebuild from a fresh account.
+    mockSendTransaction
+      .mockResolvedValueOnce({ status: 'TRY_AGAIN_LATER', hash: 'h1' })
+      .mockResolvedValueOnce({ status: 'PENDING', hash: 'h2' })
+    mockGetTransaction.mockResolvedValue({ status: 'SUCCESS', returnValue: undefined })
+
+    mockGetAccount
+      .mockResolvedValueOnce(new Account(WALLET, '0'))
+      .mockResolvedValueOnce(new Account(WALLET, '1'))
+
+    const promise = invoke(WALLET, signXDR, 'register_member')
+    await vi.advanceTimersByTimeAsync(2_000)
+    await promise
+
+    expect(mockGetAccount).toHaveBeenCalledTimes(2)
+    expect(mockPrepareTransaction).toHaveBeenCalledTimes(2)
+  })
+
+  it('TRY_AGAIN_LATER: gives up after a bounded number of attempts rather than spinning', async () => {
+    // Each retry costs a signature prompt. An unbounded loop against a
+    // permanently saturated network would hang behind a spinner forever.
     mockSendTransaction.mockResolvedValue({ status: 'TRY_AGAIN_LATER', hash: 'hash-busy' })
 
     const promise = invoke(WALLET, signXDR, 'register_member')
-    await expect(promise).rejects.toBeInstanceOf(InvokeError)
-    await expect(promise).rejects.toMatchObject({ retryable: true })
-    await expect(promise).rejects.toThrow(/network is busy/i)
+    const settled = promise.catch((e) => e)
+    await vi.advanceTimersByTimeAsync(30_000)
+    const error = await settled
 
+    expect(error).toBeInstanceOf(InvokeError)
+    expect(error.retryable).toBe(true)
+    expect(error.message).toMatch(/network is busy/i)
+    expect(mockSendTransaction).toHaveBeenCalledTimes(3)
     // The whole point: it never touches getTransaction, so it can't have
     // spent the 30s poll budget getting here.
     expect(mockGetTransaction).not.toHaveBeenCalled()
   })
 
-  it('NOT_FOUND past the timebound: throws a distinct "expired" error, not "did not succeed (NOT_FOUND)"', async () => {
+  it('NOT_FOUND past the timebound: is pending, not failed — and not retryable', async () => {
+    // #309: the submission window closing is not a rejection. The transaction
+    // was accepted and may still land, so this must not offer "Try again" —
+    // resubmitting could double-apply a vote or a withdrawal.
     mockSendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'hash-lost' })
     mockGetTransaction.mockResolvedValue({ status: 'NOT_FOUND' })
 
@@ -109,13 +162,17 @@ describe('invoke()', () => {
     await vi.advanceTimersByTimeAsync(31_000)
     const error = await settled
 
-    expect(error).toBeInstanceOf(InvokeError)
-    expect(error.retryable).toBe(true)
-    expect(error.message).toMatch(/submission window expired/i)
-    expect(error.message).not.toMatch(/did not succeed/i)
+    expect(error).toBeInstanceOf(TransactionPendingError)
+    expect(error).not.toBeInstanceOf(InvokeError)
+    expect(error.retryable).toBe(false)
+    expect(error.hash).toBe('hash-lost')
+    // Carries an explorer link so the member can verify independently instead
+    // of being told to guess.
+    expect(error.url).toBeTruthy()
+    expect(error.message).toMatch(/do not resubmit/i)
   })
 
-  it('FAILED: throws a terminal error distinct from the NOT_FOUND-timeout case', async () => {
+  it('FAILED: throws a terminal error distinct from the pending-timeout case', async () => {
     mockSendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'hash-failed' })
     mockGetTransaction.mockResolvedValue({ status: 'FAILED' })
 
@@ -124,6 +181,7 @@ describe('invoke()', () => {
     const error = await settled
 
     expect(error).toBeInstanceOf(InvokeError)
+    expect(error).not.toBeInstanceOf(TransactionPendingError)
     expect(error.retryable).toBe(false)
     expect(error.message).toContain('failed on-chain')
   })
@@ -161,5 +219,83 @@ describe('invoke()', () => {
     // BASE_FEE is 100 stroops; multiplier is 1.5, so fee should be 150.
     // Transaction.fee is a string of stroops.
     expect(capturedFee).toBe('150')
+  })
+})
+
+describe('watchTransaction() — late confirmation reconciliation (#309)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
+  })
+
+  it('reports a transaction that confirms after its submission window closed as confirmed', async () => {
+    // This is the whole point: invoke() gave up, but the transaction landed a
+    // few seconds later. The member must see a success, not a permanent error.
+    let calls = 0
+    mockGetTransaction.mockImplementation(async () => {
+      calls += 1
+      if (calls < 3) return { status: 'NOT_FOUND' }
+      return { status: 'SUCCESS', returnValue: undefined }
+    })
+    const onConfirmed = vi.fn()
+    const onFailed = vi.fn()
+
+    const watch = watchTransaction('hash-late', { onConfirmed, onFailed, timeoutMs: 60_000 })
+    await vi.advanceTimersByTimeAsync(5_000)
+    const outcome = await watch
+
+    expect(outcome).toBe('confirmed')
+    expect(onConfirmed).toHaveBeenCalledOnce()
+    expect(onFailed).not.toHaveBeenCalled()
+  })
+
+  it('reports a late on-chain failure as failed, not as a timeout', async () => {
+    mockGetTransaction.mockResolvedValue({ status: 'FAILED' })
+    const onConfirmed = vi.fn()
+    const onFailed = vi.fn()
+
+    const watch = watchTransaction('hash-doomed', { onConfirmed, onFailed, timeoutMs: 60_000 })
+    await vi.advanceTimersByTimeAsync(2_000)
+    const outcome = await watch
+
+    expect(outcome).toBe('failed')
+    expect(onFailed).toHaveBeenCalledWith('FAILED')
+    expect(onConfirmed).not.toHaveBeenCalled()
+  })
+
+  it('survives a transient RPC error and keeps polling', async () => {
+    // A flaky read during background reconciliation is not a verdict on the
+    // transaction; treating it as one would report a failure for a change that
+    // is about to succeed.
+    let calls = 0
+    mockGetTransaction.mockImplementation(async () => {
+      calls += 1
+      if (calls === 1) throw new Error('ECONNRESET')
+      return { status: 'SUCCESS', returnValue: undefined }
+    })
+    const onConfirmed = vi.fn()
+
+    const watch = watchTransaction('hash-flaky', { onConfirmed, timeoutMs: 60_000 })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(await watch).toBe('confirmed')
+    expect(onConfirmed).toHaveBeenCalledOnce()
+  })
+
+  it('gives up honestly when nothing is decided within the watch budget', async () => {
+    mockGetTransaction.mockResolvedValue({ status: 'NOT_FOUND' })
+    const onConfirmed = vi.fn()
+    const onFailed = vi.fn()
+
+    const watch = watchTransaction('hash-silent', { onConfirmed, onFailed, timeoutMs: 10_000 })
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(await watch).toBe('timeout')
+    expect(onConfirmed).not.toHaveBeenCalled()
+    expect(onFailed).not.toHaveBeenCalled()
   })
 })

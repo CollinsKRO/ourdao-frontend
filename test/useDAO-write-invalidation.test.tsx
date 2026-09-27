@@ -80,6 +80,67 @@ describe('write-hook query invalidation', () => {
     expect(invalidateSpy).toHaveBeenCalledTimes(2)
   })
 
+  // #308 — the registration bounce. `registerMember()` resolving while the
+  // cache still holds the pre-write membership is what let /dashboard's guard
+  // read a stale `isMember: false` (stale data is not `isLoading: true`, so the
+  // guard treats it as a verdict) and bounce the member back to /register.
+  describe('invalidation is awaited, not fired and forgotten', () => {
+    it('does not resolve the write until the invalidation refetch settles', async () => {
+      mockRegisterMember.mockResolvedValue({ hash: 'tx1', returnValue: null })
+      const client = makeClient()
+      // Hold the refetch open so we can observe that `run()` is parked on it.
+      let releaseRefetch: () => void = () => {}
+      const refetchInFlight = new Promise<void>((resolve) => {
+        releaseRefetch = resolve
+      })
+      const invalidateSpy = vi
+        .spyOn(client, 'invalidateQueries')
+        .mockImplementation(() => refetchInFlight)
+
+      let latest: ReturnType<typeof useMemberRegistration> | undefined
+      renderWithClient(client, useMemberRegistration, (h) => { latest = h })
+
+      let settled = false
+      let write!: Promise<unknown>
+      await act(async () => {
+        write = latest!.registerMember().then(() => {
+          settled = true
+        })
+        // The on-chain write resolves promptly; the invalidation does not.
+        await new Promise((r) => setTimeout(r, 30))
+      })
+
+      expect(invalidateSpy).toHaveBeenCalled()
+      expect(settled).toBe(false)
+
+      await act(async () => {
+        releaseRefetch()
+        await write
+      })
+      expect(settled).toBe(true)
+    })
+
+    it('awaits every invalidated key, not just the first', async () => {
+      mockStake.mockResolvedValue({ hash: 'tx3', returnValue: null })
+      const client = makeClient()
+      const calls: unknown[][] = []
+      const invalidateSpy = vi.spyOn(client, 'invalidateQueries').mockImplementation((args) => {
+        calls.push((args as { queryKey: unknown[] }).queryKey as unknown[])
+        return Promise.resolve()
+      })
+
+      let latest: ReturnType<typeof useStaking> | undefined
+      renderWithClient(client, useStaking, (h) => { latest = h })
+
+      await act(async () => {
+        await latest!.stake(BigInt(100))
+      })
+
+      expect(invalidateSpy).toHaveBeenCalledTimes(calls.length)
+      expect(calls.map((k) => k[0]).sort()).toEqual(['backendStats', 'daoStats', 'stake', 'userData'])
+    })
+  })
+
   it('a failed registerMember invalidates nothing', async () => {
     mockRegisterMember.mockRejectedValue(new Error('NotEligible'))
     const client = makeClient()
@@ -143,7 +204,7 @@ describe('write-hook query invalidation', () => {
     expect(client.getQueryData(['hasVoted', 'Loan', 7, 'GALICE'])).toBe(false)
   })
 
-  it('staking invalidates the connected address\'s own stake and daoStats', async () => {
+  it('staking invalidates the connected address\'s own stake, its voting weight, and daoStats', async () => {
     mockStake.mockResolvedValue({ hash: 'tx3', returnValue: null })
     const client = makeClient()
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries')
@@ -160,9 +221,12 @@ describe('write-hook query invalidation', () => {
       { timeout: 2000 }
     )
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['daoStats'] })
+    // Staking moves voting weight, which lives in userData — invalidating only
+    // `stake` left the dashboard and every canVote showing the old weight.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['userData', 'GALICE'] })
   })
 
-  it('attaching a document invalidates only that document\'s cache entry', async () => {
+  it('attaching a document invalidates that document plus the proposal it hangs off', async () => {
     mockAttachDocument.mockResolvedValue({ hash: 'tx4', returnValue: null })
     const client = makeClient()
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries')
@@ -179,6 +243,9 @@ describe('write-hook query invalidation', () => {
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['document', 'Loan', 3] }),
       { timeout: 2000 }
     )
-    expect(invalidateSpy).toHaveBeenCalledTimes(1)
+    // The proposal rows themselves show whether documents exist, so they have
+    // to refresh too.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['loanProposal', 3] })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['loanProposals'] })
   })
 })

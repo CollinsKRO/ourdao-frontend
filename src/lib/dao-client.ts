@@ -16,6 +16,7 @@ import {
   Address,
   BASE_FEE,
   Contract,
+  FeeBumpTransaction,
   Keypair,
   Transaction,
   TransactionBuilder,
@@ -27,6 +28,7 @@ import {
 import {
   CONTRACT_ID,
   NETWORK_PASSPHRASE,
+  getTransactionUrl,
   isContractConfigured,
   server,
 } from './stellar'
@@ -186,6 +188,31 @@ const POLL_INTERVAL_MS = 1000
 const DEFAULT_POLL_BUDGET_MS = 30_000
 
 /**
+ * How long a background {@link watchTransaction} keeps checking after
+ * `invoke`'s submission window closed. Generous on purpose: this is the window
+ * in which a late confirmation is still worth telling the member about, and it
+ * costs nothing but an occasional `getTransaction` every few seconds.
+ */
+const BACKGROUND_WATCH_BUDGET_MS = 5 * 60_000
+
+/**
+ * Bounded resubmission for `TRY_AGAIN_LATER` (#309).
+ *
+ * `TRY_AGAIN_LATER` means the node declined to queue the transaction at all —
+ * typically because its mempool is full. Nothing was submitted, so there is
+ * nothing to poll and nothing to lose by trying again. The right response is to
+ * wait out the congestion and resubmit, not to hand the member an error and
+ * make them click.
+ *
+ * The bound matters as much as the retry: an unbounded retry against a
+ * permanently saturated network would spin forever while the member stares at a
+ * loading spinner. Three attempts with linear backoff (1s, 2s, 3s) is enough to
+ * ride out a normal burst and then gives up honestly.
+ */
+const RESUBMIT_MAX_ATTEMPTS = 3
+const RESUBMIT_BASE_BACKOFF_MS = 1_000
+
+/**
  * A submission/confirmation failure from {@link invoke}, distinct from a
  * decoded on-chain contract error.
  *
@@ -205,6 +232,101 @@ export class InvokeError extends Error {
   }
 }
 
+/**
+ * The submission window closed while the transaction was still unconfirmed.
+ *
+ * This is deliberately **not** an {@link InvokeError}, and specifically not a
+ * retryable one. The transaction was accepted by the network and may still
+ * land — `retryable: true` here would invite the member to resubmit a change
+ * that might already be applied, which for a vote or a withdrawal is a real
+ * cost. So this type carries the two things a UI needs to do the right thing:
+ *
+ *   - `hash` / `url` — so the member can check the transaction themselves, or
+ *     follow it to an explorer, instead of being told to guess.
+ *   - `retryable === false` — so the "Try again" affordance is not offered.
+ *
+ * `useWriteAction` catches this, keeps a background poll running via
+ * {@link watchTransaction}, and upgrades the UI to "confirmed" if the
+ * transaction does land after the window closed. See #309.
+ */
+export class TransactionPendingError extends Error {
+  /** The submitted transaction's hash. Stable across confirmations. */
+  readonly hash: string
+  /**
+   * Explorer link for {@link hash}, for the member to verify independently.
+   * Null when the hash is empty, which the network would not have produced —
+   * the message then falls back to naming the hash alone.
+   */
+  readonly url: string | null
+  /** Always false: resubmitting could double-apply the change. */
+  readonly retryable = false
+
+  constructor(hash: string, url: string | null) {
+    super(
+      `Transaction ${hash} was submitted but not confirmed before its submission ` +
+        `window closed. It may still complete — do not resubmit. ` +
+        (url ? `Check ${url} for its status.` : 'Check its status on a Stellar explorer.')
+    )
+    this.name = 'TransactionPendingError'
+    this.hash = hash
+    this.url = url
+  }
+}
+
+
+/**
+ * Keep checking a submitted transaction after {@link invoke} has given up
+ * waiting for it, so a late confirmation can still be reported as a success
+ * rather than a failure.
+ *
+ * `invoke`'s poll is bounded by the transaction's own `timeBounds`, which is a
+ * submission window, not a confirmation guarantee — closing it does not mean
+ * the transaction was rejected. This is the reconciliation pass for that gap.
+ *
+ * Resolves on confirmation, on a terminal on-chain failure, or when `timeoutMs`
+ * elapses without either; it never rejects, because there is no useful thing
+ * for a caller to do with a background poll's failure beyond stopping.
+ */
+export async function watchTransaction(
+  hash: string,
+  handlers: {
+    onConfirmed?: (returnValue: unknown) => void
+    onFailed?: (status: string) => void
+    /** Give up on the background watch after this long. Default 5 minutes. */
+    timeoutMs?: number
+  } = {}
+): Promise<'confirmed' | 'failed' | 'timeout'> {
+  const { onConfirmed, onFailed, timeoutMs = BACKGROUND_WATCH_BUDGET_MS } = handlers
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    await sleep(POLL_INTERVAL_MS)
+    try {
+      const result = await withTimeout(
+        server.getTransaction(hash),
+        WRITE_TIMEOUT_MS,
+        'getTransaction'
+      )
+      if (result.status === 'SUCCESS') {
+        const confirmed = result as { returnValue?: xdr.ScVal }
+        onConfirmed?.(
+          confirmed.returnValue ? scValToNative(confirmed.returnValue) : null
+        )
+        return 'confirmed'
+      }
+      if (result.status !== 'NOT_FOUND') {
+        onFailed?.(String(result.status))
+        return 'failed'
+      }
+    } catch {
+      // A transient RPC failure during background reconciliation is not
+      // itself a verdict on the transaction. Keep polling until the budget
+      // runs out; the final `timeout` is the honest answer.
+    }
+  }
+  return 'timeout'
+}
+
 /** Prepare, sign, submit, and confirm a state-changing call. */
 export async function invoke(
   walletAddress: string,
@@ -217,21 +339,58 @@ export async function invoke(
   }
 
   const contract = new Contract(CONTRACT_ID)
-  const account = await withTimeout(server.getAccount(walletAddress), WRITE_TIMEOUT_MS, 'getAccount')
-  const built = new TransactionBuilder(account, {
-    fee: INCLUSION_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(contract.call(method, ...args))
-    .setTimeout(30)
-    .build()
 
-  // Simulate + assemble auth entries and resource footprint.
-  const prepared = await withTimeout(server.prepareTransaction(built), WRITE_TIMEOUT_MS, 'prepareTransaction')
-  const signedXdr = await signXDR(prepared.toXDR())
-  const signedTx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+  // One submission attempt: a *fresh* account read, build, simulate, sign, and
+  // send. Rebuilt from scratch on every attempt because a resubmission has to
+  // carry a new sequence number and a refreshed simulation — replaying a stale
+  // signed transaction would come back as a bad-sequence error instead of the
+  // congestion signal we are responding to (#309).
+  // Assigned by submitOnce before the poll below reads it.
+  let signed!: Transaction | FeeBumpTransaction
 
-  const sent = await withTimeout(server.sendTransaction(signedTx), WRITE_TIMEOUT_MS, 'sendTransaction')
+  const submitOnce = async () => {
+    const account = await withTimeout(
+      server.getAccount(walletAddress),
+      WRITE_TIMEOUT_MS,
+      'getAccount'
+    )
+    const built = new TransactionBuilder(account, {
+      fee: INCLUSION_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(contract.call(method, ...args))
+      .setTimeout(30)
+      .build()
+
+    // Simulate + assemble auth entries and resource footprint.
+    const prepared = await withTimeout(
+      server.prepareTransaction(built),
+      WRITE_TIMEOUT_MS,
+      'prepareTransaction'
+    )
+    const signedXdr = await signXDR(prepared.toXDR())
+    signed = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+
+    return withTimeout(server.sendTransaction(signed), WRITE_TIMEOUT_MS, 'sendTransaction')
+  }
+
+  // Resubmit across a congested network, bounded (#309). `TRY_AGAIN_LATER` means
+  // the node never queued anything, so there is nothing to poll and nothing to
+  // double-apply — waiting out the congestion and resending is strictly better
+  // than handing the member an error to click. The bound matters as much as the
+  // retry: each attempt costs a signature prompt, and an unbounded loop against
+  // a permanently saturated network would just spin behind a spinner.
+  let sent!: Awaited<ReturnType<typeof server.sendTransaction>>
+  for (let attempt = 1; attempt <= RESUBMIT_MAX_ATTEMPTS; attempt++) {
+    sent = await submitOnce()
+    if (sent.status !== 'TRY_AGAIN_LATER') break
+    if (attempt < RESUBMIT_MAX_ATTEMPTS) {
+      // Linear backoff: congestion clears on a human timescale, and the member
+      // is not being asked to click anything.
+      await sleep(RESUBMIT_BASE_BACKOFF_MS * attempt)
+    }
+  }
+  const sentHash = sent.hash
 
   // Every `sendTransaction` status gets an explicit branch (#58) — the old
   // code only checked for 'ERROR' and let PENDING, DUPLICATE, and
@@ -246,9 +405,12 @@ export async function invoke(
         retryable: false,
       })
     case 'TRY_AGAIN_LATER':
+      // The resubmission budget is spent, so the network really is saturated.
+      // Nothing was queued, which makes this safe to retry — and the only
+      // honest thing left is to tell the member.
       throw new InvokeError(
-        'The network is busy and did not accept this transaction. Please try again in a moment.',
-        { retryable: true },
+        `The network is busy and did not accept this transaction after ${RESUBMIT_MAX_ATTEMPTS} attempts. Please try again in a moment.`,
+        { retryable: true }
       )
     case 'DUPLICATE':
       // Already queued by an earlier identical submission (e.g. a double
@@ -272,34 +434,40 @@ export async function invoke(
   // FeeBumpTransaction has no timeBounds of its own (only its inner
   // Transaction does), so fall back to the default budget for those.
   const deadlineMs =
-    signedTx instanceof Transaction && signedTx.timeBounds?.maxTime
-      ? Number(signedTx.timeBounds.maxTime) * 1000
+    signed instanceof Transaction && signed.timeBounds?.maxTime
+      ? Number(signed.timeBounds.maxTime) * 1000
       : Date.now() + DEFAULT_POLL_BUDGET_MS
 
-  let result = await withTimeout(server.getTransaction(sent.hash), WRITE_TIMEOUT_MS, 'getTransaction')
+  let result = await withTimeout(
+    server.getTransaction(sentHash),
+    WRITE_TIMEOUT_MS,
+    'getTransaction'
+  )
   while (result.status === 'NOT_FOUND' && Date.now() < deadlineMs) {
     await sleep(POLL_INTERVAL_MS)
-    result = await withTimeout(server.getTransaction(sent.hash), WRITE_TIMEOUT_MS, 'getTransaction')
+    result = await withTimeout(
+      server.getTransaction(sentHash),
+      WRITE_TIMEOUT_MS,
+      'getTransaction'
+    )
   }
 
   if (result.status === 'NOT_FOUND') {
-    // Distinct from a confirmed failure: the transaction's submission
-    // window expired before the network confirmed it either way. It may
-    // still land — the caller (or a background reconciliation) should
-    // check `sent.hash` again later rather than treat this as terminal.
-    throw new InvokeError(
-      `Transaction ${sent.hash} was not confirmed before its submission window expired. It may still complete — check its status before retrying.`,
-      { retryable: true },
-    )
+    // Not a failure: the transaction was accepted and may still land, so this
+    // throws the non-retryable pending error (hash + explorer link) and lets
+    // `useWriteAction` reconcile in the background rather than telling the
+    // member to resubmit something that might already be applied (#309).
+    throw new TransactionPendingError(sentHash, getTransactionUrl(sentHash))
   }
   if (result.status !== 'SUCCESS') {
-    throw new InvokeError(`Transaction ${sent.hash} failed on-chain (${result.status}).`, {
+    throw new InvokeError(`Transaction ${sentHash} failed on-chain (${result.status}).`, {
       retryable: false,
     })
   }
+  const confirmed = result as { returnValue?: xdr.ScVal }
   return {
-    hash: sent.hash,
-    returnValue: result.returnValue ? scValToNative(result.returnValue) : null,
+    hash: sentHash,
+    returnValue: confirmed.returnValue ? scValToNative(confirmed.returnValue) : null,
   }
 }
 

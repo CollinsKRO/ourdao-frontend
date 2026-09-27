@@ -32,6 +32,14 @@ vi.mock('@/lib/dao-client', () => ({
   InvokeError: class InvokeError extends Error {
     retryable = false
   },
+  // A submission window that closed without a confirmation is a distinct,
+  // non-retryable outcome (#309) — useWriteAction branches on it.
+  TransactionPendingError: class TransactionPendingError extends Error {
+    hash = 'h'
+    url: string | null = null
+    retryable = false
+  },
+  watchTransaction: vi.fn().mockResolvedValue('timeout'),
 }))
 
 const polite = () => screen.getByTestId('live-polite')

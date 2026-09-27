@@ -26,7 +26,7 @@ export function useDAOContract() {
 
 /** Aggregated data for the connected member. */
 export function useUserData(): UserData {
-  const { address, isConnected } = useWallet()
+  const { address, isConnected, isRestoring } = useWallet()
 
   const { data, isLoading, isError, refetch: refetchUser } = useQuery({
     queryKey: address ? queryKeys.userData(address) : queryKeys.userDataDisabled(),
@@ -65,7 +65,14 @@ export function useUserData(): UserData {
   const m = data?.member
   return {
     isConnected,
-    isLoading,
+    // `isRestoring` is folded in on purpose (#307). Freighter's `isAllowed()`
+    // and `getAddress()` are async, so on a hard refresh the first render or
+    // two has `isConnected === false` for a wallet that is in fact connected.
+    // A guard reading only the query's `isLoading` sees a *disabled* query
+    // (isLoading false) with no data, concludes "not a member", and redirects a
+    // connected member to /register — or / — before the address ever arrives.
+    // Callers get one flag that means "membership is not knowable yet".
+    isLoading: isRestoring || isLoading,
     address: address || undefined,
     isMember: !!data?.isMember,
     isAdmin: !!data?.isAdmin,

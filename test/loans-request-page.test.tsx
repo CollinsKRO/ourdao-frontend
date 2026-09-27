@@ -9,6 +9,10 @@ const mockToastSuccess = vi.fn()
 const mockToastError = vi.fn()
 let mockStats: Record<string, unknown> = { features: { documentStorage: true } }
 
+// Mutable so a test can put the wallet back into its pre-restore state, which
+// is what a hard refresh looks like for the first few renders (#307).
+let mockUserData: Record<string, unknown> = { isConnected: true, isMember: true, hasActiveLoan: false }
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
 }))
@@ -27,11 +31,7 @@ vi.mock('@/components/AppShell', () => ({
 
 vi.mock('@/hooks/useDAO', () => ({
   useDAOStats: () => mockStats,
-  useUserData: () => ({
-    isConnected: true,
-    isMember: true,
-    hasActiveLoan: false,
-  }),
+  useUserData: () => mockUserData,
   useLoanRequest: () => ({
     requestLoan: (...args: unknown[]) => mockRequestLoan(...args),
     isPending: false,
@@ -44,6 +44,14 @@ vi.mock('@/hooks/useDAO', () => ({
     error: null,
     isSuccess: false,
   }),
+}))
+
+vi.mock('@/lib/responsive', () => ({
+  useIsMobile: () => false,
+  useResponsiveCardLayout: () => ({ getCardGridClass: () => 'grid-cols-4' }),
+  // FormSkeleton (rendered while membership resolves) pulls this in
+  // transitively via ui/skeleton.tsx.
+  useNetworkAware: () => ({ shouldOptimize: false }),
 }))
 
 async function fillAmountAndAdvance(amount = '10') {
@@ -61,10 +69,54 @@ describe('RequestLoanPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockStats = { features: { documentStorage: true } }
+    mockUserData = { isConnected: true, isMember: true, hasActiveLoan: false }
     mockRequestLoan.mockResolvedValue(42)
     mockAttach.mockResolvedValue({ hash: 'txhash' })
   })
   afterEach(() => vi.useRealTimers())
+
+  // #307 — the page used to run an unguarded `if (!userData.isConnected)
+  // router.push('/')`, which fires during the window where the wallet is
+  // still restoring and isConnected is false for a wallet that is connected.
+  describe('membership guard', () => {
+    it('does not redirect away while the wallet is still restoring', async () => {
+      // Exactly what useUserData returns mid-restore: no address yet, the
+      // membership query never ran, so isMember defaults to false.
+      mockUserData = { isConnected: false, isMember: false, isLoading: true, hasActiveLoan: false }
+      render(<RequestLoanPage />)
+
+      expect(mockPush).not.toHaveBeenCalled()
+    })
+
+    it('does not flash "Access Restricted" at a member during the restore window', async () => {
+      mockUserData = { isConnected: false, isMember: false, isLoading: true, hasActiveLoan: false }
+      render(<RequestLoanPage />)
+
+      expect(screen.queryByText('Access Restricted')).not.toBeInTheDocument()
+      expect(screen.queryByText(/You must be a DAO member to request loans/)).not.toBeInTheDocument()
+    })
+
+    it('redirects to / once the restore settles and there is genuinely no wallet', async () => {
+      mockUserData = { isConnected: false, isMember: false, isLoading: false, hasActiveLoan: false }
+      render(<RequestLoanPage />)
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/'))
+    })
+
+    it('redirects to /register once settled and confirmed a non-member', async () => {
+      mockUserData = { isConnected: true, isMember: false, isLoading: false, hasActiveLoan: false }
+      render(<RequestLoanPage />)
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/register'))
+    })
+
+    it('keeps a connected member on the page with no redirect', async () => {
+      render(<RequestLoanPage />)
+
+      await screen.findByLabelText(/Loan Amount/)
+      expect(mockPush).not.toHaveBeenCalled()
+    })
+  })
 
   it('does not render a purpose field, privacy toggle, or privacy secret anywhere in the flow', async () => {
     render(<RequestLoanPage />)

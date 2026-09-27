@@ -32,7 +32,15 @@ vi.mock('@/lib/dao-client', () => ({
   })),
   InvokeError: class InvokeError extends Error {
     retryable = true
-  }
+  },
+  // A submission window that closed without a confirmation is a distinct,
+  // non-retryable outcome (#309) — useWriteAction branches on it.
+  TransactionPendingError: class TransactionPendingError extends Error {
+    hash = '0x123'
+    url: string | null = null
+    retryable = false
+  },
+  watchTransaction: vi.fn().mockResolvedValue('timeout'),
 }))
 
 function TestWriteHarness({ onRender }: { onRender: (w: ReturnType<typeof useWriteAction>) => void }) {

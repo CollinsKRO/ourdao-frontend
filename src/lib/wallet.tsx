@@ -41,11 +41,21 @@ export function isVersionAtLeast(version: string, minVersion: string): boolean {
 interface WalletContextValue {
   address: string | null
   isConnected: boolean
+  /**
+   * True while the previously-authorized session is still being restored.
+   *
+   * `isConnected` is false until `isAllowed()` then `getAddress()` resolve, so
+   * on a hard refresh it briefly reports "not connected" for a wallet that
+   * *is* connected. Route guards must treat this window as "unknown", not
+   * "signed out" — otherwise every member gets bounced off a member-only page
+   * on every load (#307).
+   */
+  isRestoring: boolean
   connecting: boolean
   connect: () => Promise<void>
   disconnect: () => void
   /** Signs a base64 transaction XDR with Freighter and returns the signed XDR. */
-  signXDR: (xdr: string) => Promise<string>
+  signXDR: (xdr: string, options?: { timeoutMs?: number; signal?: AbortSignal }) => Promise<string>
   /** Signs an arbitrary message with Freighter and returns the base64 signature. */
   signMessage: (message: string) => Promise<string>
   /** True when the connected Freighter wallet's active network differs from this app's configured NETWORK_PASSPHRASE. */
@@ -138,6 +148,11 @@ const DEFAULT_SIGN_TIMEOUT_MS = 60000
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [address, setAddress] = useState<string | null>(null)
   const [connecting, setConnecting] = useState(false)
+  // Starts true and flips false as soon as the restore attempt below settles.
+  // Freighter's `isAllowed()`/`getAddress()` are async, so for the first
+  // render or two `isConnected` is false even for a wallet that is connected —
+  // this flag is what tells a route guard to wait rather than redirect (#307).
+  const [isRestoring, setIsRestoring] = useState(true)
   const [walletNetworkPassphrase, setWalletNetworkPassphrase] = useState<string | null>(null)
   const [walletNetwork, setWalletNetwork] = useState<string | null>(null)
   const [freighterVersion, setFreighterVersion] = useState<string | null>(null)
@@ -327,6 +342,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         /* Freighter not installed — stay disconnected. */
+      } finally {
+        // Settled either way: connected, or genuinely not. Guards can now
+        // decide instead of waiting on a value that will never arrive.
+        if (!cancelled) setIsRestoring(false)
       }
     })()
     return () => {
@@ -370,6 +389,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const disconnect = useCallback(() => {
     setAddress(null)
+    setIsRestoring(false)
     // Clear all cached query data so no previous account's data lingers
     // after disconnect — matches the account-switch behaviour above.
     queryClient.clear()
@@ -469,6 +489,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       value={{
         address,
         isConnected: !!address,
+        isRestoring,
         connecting,
         connect,
         disconnect,

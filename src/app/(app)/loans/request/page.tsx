@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -36,11 +36,18 @@ interface DocumentMetadata {
 }
 import toast from 'react-hot-toast'
 import { PageHeader } from '@/components/PageHeader'
+import { useRequireMember } from '@/hooks/useRequireMember'
+import { FormSkeleton } from '@/components/ui/skeleton'
 
 export default function RequestLoanPage() {
   const router = useRouter()
   const stats = useDAOStats()
   const userData = useUserData()
+  // The guard owns the redirect decision (#307). It waits for the wallet to
+  // finish restoring *and* the membership read to settle before concluding
+  // anything, so a hard refresh no longer bounces a connected member to `/`
+  // while `isConnected` is still its temporary initial `false`.
+  const { isResolving } = useRequireMember({ userData })
   const { requestLoan, isPending: isRequestPending } = useLoanRequest()
   const { attach, isPending: isAttachPending } = useAttachDocument()
 
@@ -74,14 +81,6 @@ export default function RequestLoanPage() {
     const riskMultiplier = amount > 10 ? 1.2 : 1.0 // Higher amounts = higher risk
     return baseRate * riskMultiplier
   })()
-
-  useEffect(() => {
-    if (!userData.isConnected) {
-      router.push('/')
-    } else if (!userData.isMember) {
-      router.push('/register')
-    }
-  }, [userData.isConnected, userData.isMember, router])
 
   const handleInputChange = (field: 'amount' | 'documentHash', value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -397,6 +396,26 @@ export default function RequestLoanPage() {
           )
         })}
       </div>
+    )
+  }
+
+  // While the wallet restores / membership resolves we don't yet know whether
+  // this visitor may stay, so show the form's shape rather than the
+  // "Access Restricted" card. The old version rendered the restriction card
+  // immediately on every hard refresh, then swapped it for the form once the
+  // address arrived — a flash of "you can't do this" at a member who can (#307).
+  if (isResolving) {
+    return (
+      <>
+        <PageHeader title="Request a Loan" subtitle="Tell the DAO what you need" />
+        <div className="max-w-2xl mx-auto">
+          <Card>
+            <CardContent className="p-8">
+              <FormSkeleton fields={2} showSubmit={false} />
+            </CardContent>
+          </Card>
+        </div>
+      </>
     )
   }
 

@@ -7,6 +7,26 @@ function jsonResponse(body: unknown, ok = true) {
 
 const CONFIGURED_URL = 'http://localhost:4000'
 
+/** A complete, valid /api/stats body — `getStats` validates the whole shape. */
+const statsFixture = {
+  totalMembers: 5,
+  activeMembers: 4,
+  totalLoanProposals: 2,
+  totalLoans: 1,
+  activeLoans: 1,
+  defaultedLoans: 0,
+  totalTreasuryProposals: 0,
+  totalStaked: '0',
+  lastIndexedLedger: 42,
+  secondsSinceUpdate: 1,
+  indexerStale: false,
+  totalDefaultedValue: '0',
+  interestCollected: '0',
+  principalLent: '0',
+  principalRepaid: '0',
+  valueDefaulted: '0',
+}
+
 describe('backend fetch wrappers', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
@@ -18,11 +38,10 @@ describe('backend fetch wrappers', () => {
   })
 
   it('getStats fetches /api/stats and returns the parsed body', async () => {
-    const stats = { totalMembers: 5 }
-    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(stats))
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(statsFixture))
     const result = await backend.getStats()
     expect(fetch).toHaveBeenCalledWith(`${CONFIGURED_URL}/api/stats`, expect.objectContaining({ cache: 'no-store' }))
-    expect(result).toEqual(stats)
+    expect(result).toEqual(statsFixture)
   })
 
   it('getStats rejects with a BackendError when the response is not ok', async () => {
@@ -64,9 +83,9 @@ describe('backend fetch wrappers', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('getLoans falls back to an empty array when any loan row has the wrong shape', async () => {
+  it('getLoans rejects when any loan row has the wrong shape, rather than showing an empty list', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse([{ id: 1, borrower: 'G', status: 'pending' }]))
-    expect(await backend.getLoans()).toEqual([])
+    await expect(backend.getLoans()).rejects.toBeInstanceOf(BackendError)
   })
 
   it('getEvents composes symbol + limit query params', async () => {
@@ -78,9 +97,9 @@ describe('backend fetch wrappers', () => {
     )
   })
 
-  it('getEvents falls back to an empty array when the event response shape drifts', async () => {
+  it('getEvents rejects when the event response shape drifts', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse([{ id: 1, ledger: 'not-a-number' }]))
-    expect(await backend.getEvents()).toEqual([])
+    await expect(backend.getEvents()).rejects.toBeInstanceOf(BackendError)
   })
 
   it('getAdminLog hits /api/admin/log with the limit', async () => {
@@ -89,28 +108,120 @@ describe('backend fetch wrappers', () => {
     expect(fetch).toHaveBeenCalledWith(`${CONFIGURED_URL}/api/admin/log?limit=10`, expect.anything())
   })
 
-  it('markNotificationRead PATCHes the right URL and reports success', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
-    const ok = await backend.markNotificationRead(42)
-    expect(fetch).toHaveBeenCalledWith(`${CONFIGURED_URL}/api/notifications/42/read`, { method: 'PATCH' })
-    expect(ok).toBe(true)
-  })
+  describe('authenticated notification mutations (#306)', () => {
+    const ADDRESS = 'GALICE'
+    const NONCE = 'a'.repeat(64)
+    const SIGNATURE = 'c2lnbmF0dXJl'
+    const signer = { address: ADDRESS, signMessage: vi.fn(async () => SIGNATURE) }
 
-  it('markNotificationRead returns false on a non-ok response or a thrown error', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({ ok: false } as Response)
-    expect(await backend.markNotificationRead(1)).toBe(false)
+    beforeEach(() => {
+      signer.signMessage.mockClear()
+    })
 
-    vi.mocked(fetch).mockRejectedValueOnce(new Error('down'))
-    expect(await backend.markNotificationRead(1)).toBe(false)
-  })
+    /** The handshake is two requests: the challenge, then the PATCH. */
+    const mockChallengeThen = (patchResponse: Partial<Response>) =>
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse({ nonce: NONCE }))
+        .mockResolvedValueOnce({ ok: true, status: 200, ...patchResponse } as Response)
 
-  it('markAllNotificationsRead URL-encodes the address', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
-    await backend.markAllNotificationsRead('GA BC')
-    expect(fetch).toHaveBeenCalledWith(
-      `${CONFIGURED_URL}/api/notifications/read-all?address=GA%20BC`,
-      { method: 'PATCH' }
-    )
+    it('signs "<nonce>:<address>" and sends the header the backend parses', async () => {
+      mockChallengeThen({})
+
+      const result = await backend.markNotificationRead(42, signer)
+
+      expect(signer.signMessage).toHaveBeenCalledWith(`${NONCE}:${ADDRESS}`)
+      expect(result).toEqual({ ok: true, status: 200 })
+      const [, init] = vi.mocked(fetch).mock.calls[1]
+      expect(init?.method).toBe('PATCH')
+      expect((init?.headers as Record<string, string>).Authorization).toBe(
+        `StellarSignature ${ADDRESS}:${SIGNATURE}:${NONCE}`
+      )
+    })
+
+    it('a 401 is reported as unauthorized with the backend\'s own reason, not as success', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse({ nonce: NONCE }))
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 401,
+          json: () => Promise.resolve({ error: 'Invalid or expired nonce' }),
+        } as Response)
+
+      await expect(backend.markNotificationRead(1, signer)).resolves.toEqual({
+        ok: false,
+        status: 401,
+        reason: 'unauthorized',
+        message: 'Invalid or expired nonce',
+      })
+    })
+
+    it('a 403 (another address\'s notification) is distinguished from a 401', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse({ nonce: NONCE }))
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 403,
+          json: () => Promise.resolve({ error: 'Cannot modify notifications for another address' }),
+        } as Response)
+
+      await expect(backend.markNotificationRead(1, signer)).resolves.toMatchObject({
+        ok: false,
+        reason: 'forbidden',
+      })
+    })
+
+    it('a rejected signature prompt never reaches the PATCH at all', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ nonce: NONCE }))
+      signer.signMessage.mockRejectedValueOnce(new Error('User declined'))
+
+      await expect(backend.markNotificationRead(1, signer)).resolves.toMatchObject({
+        ok: false,
+        reason: 'rejected',
+      })
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('a C… account is refused locally, without a pointless signature prompt', async () => {
+      const contractSigner = { address: 'CCONTRACT', signMessage: signer.signMessage }
+      signer.signMessage.mockClear()
+
+      await expect(backend.markNotificationRead(1, contractSigner)).resolves.toMatchObject({
+        ok: false,
+        reason: 'unsupported-address',
+      })
+      expect(signer.signMessage).not.toHaveBeenCalled()
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('an unreachable backend during the handshake is "unavailable", not a rejection', async () => {
+      vi.mocked(fetch).mockRejectedValueOnce(new Error('down'))
+
+      await expect(backend.markNotificationRead(1, signer)).resolves.toMatchObject({
+        ok: false,
+        reason: 'unavailable',
+      })
+    })
+
+    it('reports failure when no backend is configured, instead of pretending it saved', async () => {
+      vi.stubEnv('NEXT_PUBLIC_BACKEND_URL', '')
+
+      await expect(backend.markNotificationRead(1, signer)).resolves.toMatchObject({
+        ok: false,
+        reason: 'unavailable',
+      })
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('markAllNotificationsRead URL-encodes the address and signs for that same address', async () => {
+      mockChallengeThen({})
+      const spaced = { address: 'GA BC', signMessage: signer.signMessage }
+
+      await backend.markAllNotificationsRead('GA BC', spaced)
+
+      expect(signer.signMessage).toHaveBeenCalledWith(`${NONCE}:GA BC`)
+      const [url] = vi.mocked(fetch).mock.calls[1]
+      expect(url).toBe(`${CONFIGURED_URL}/api/notifications/read-all?address=GA%20BC`)
+    })
   })
 })
 
