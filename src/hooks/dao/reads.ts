@@ -28,7 +28,7 @@ export function useDAOContract() {
 export function useUserData(): UserData {
   const { address, isConnected } = useWallet()
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch: refetchUser } = useQuery({
     queryKey: address ? queryKeys.userData(address) : queryKeys.userDataDisabled(),
     enabled: !!address && isContractConfigured(),
     queryFn: async () => {
@@ -51,7 +51,7 @@ export function useUserData(): UserData {
   // Issue #242: Gated on backend configuration and membership:
   // - If backend is unconfigured, do not poll.
   // - A connected non-member does not poll for loan history (when contract is configured).
-  const { data: loans } = useQuery({
+  const { data: loans, isError: loansError, refetch: refetchLoans } = useQuery({
     queryKey: address ? queryKeys.userLoans(address) : queryKeys.userLoansDisabled(),
     enabled: !!address && backendConfigured && (!isContractConfigured() || isMember),
     queryFn: () => backend.getLoans(address!),
@@ -88,6 +88,12 @@ export function useUserData(): UserData {
     pendingYield: asBigInt(data?.pendingYield),
     hasActiveLoan: !!m?.has_active_loan,
     loans: (loans ?? []).map(toLoan),
+    isError,
+    loansError,
+    refetch: () => {
+      if (isError) void refetchUser()
+      if (loansError) void refetchLoans()
+    },
   }
 }
 
@@ -99,6 +105,9 @@ export type ExtendedStats = DAOStats & {
   maxLoanToTreasuryRatio: number
   consensusThreshold: number
   indexerStale: boolean
+  /** A stats read failed, so the figures below are defaults, not the DAO's real numbers. */
+  isError: boolean
+  refetch: () => void
   secondsSinceUpdate: number | null
   interestCollected: string
   principalLent: string
@@ -134,7 +143,7 @@ export function useLoanPolicy(): UILoanPolicy {
 }
 
 export function useDAOStats(): ExtendedStats {
-  const { data } = useQuery({
+  const { data, isError: contractError, refetch: refetchContract } = useQuery({
     queryKey: queryKeys.daoStats(),
     enabled: isContractConfigured(),
     queryFn: async () => {
@@ -154,7 +163,7 @@ export function useDAOStats(): ExtendedStats {
   // Loan counts and total stake are aggregated by the off-chain indexer, which
   // sees the full event history the contract doesn't keep queryable.
   const backendConfigured = isBackendConfigured()
-  const { data: agg } = useQuery({
+  const { data: agg, isError: indexerError, refetch: refetchIndexer } = useQuery({
     queryKey: queryKeys.daoStatsBackend(),
     enabled: backendConfigured,
     queryFn: () => backend.getStats(),
@@ -184,6 +193,11 @@ export function useDAOStats(): ExtendedStats {
     maxLoanToTreasuryRatio,
     consensusThreshold: Number(data?.threshold ?? 0),
     indexerStale: agg?.indexerStale ?? false,
+    isError: contractError || indexerError,
+    refetch: () => {
+      if (contractError) void refetchContract()
+      if (indexerError) void refetchIndexer()
+    },
     secondsSinceUpdate: agg?.secondsSinceUpdate ?? null,
     interestCollected: agg?.interestCollected ?? '0',
     principalLent: agg?.principalLent ?? '0',
@@ -207,7 +221,7 @@ export function useDAOStats(): ExtendedStats {
 // remains for call-site compatibility with the previous shell.
 export function useDAOEvents() {
   const backendConfigured = isBackendConfigured()
-  const { data } = useQuery({
+  const { data, isError, refetch } = useQuery({
     queryKey: queryKeys.daoEvents(),
     enabled: backendConfigured,
     queryFn: () => backend.getEvents(50),
@@ -216,5 +230,5 @@ export function useDAOEvents() {
   })
   const events = (data ?? []) as unknown as Record<string, unknown>[]
   const setEvents = () => {}
-  return { events, setEvents }
+  return { events, setEvents, isError, refetch }
 }

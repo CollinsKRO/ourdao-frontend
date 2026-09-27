@@ -15,6 +15,7 @@ import {
 import { useDAOStats, useUserData, useMemberRegistration } from '@/hooks/useDAO'
 import { formatToken } from '@/lib/utils'
 import toast from 'react-hot-toast'
+import { MAIN_CONTENT_ID } from '@/lib/a11y'
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -231,7 +232,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-blue-50 dark:from-background dark:to-blue-950/20 py-12 px-4 sm:px-6 lg:px-8">
+    <main id={MAIN_CONTENT_ID} tabIndex={-1} className="min-h-screen bg-gradient-to-br from-background to-blue-50 py-12 px-4 focus:outline-none dark:from-background dark:to-blue-950/20 sm:px-6 lg:px-8">
       <div className="max-w-2xl mx-auto">
         <div className="mb-8">
           <Link
@@ -297,6 +298,6 @@ export default function RegisterPage() {
           </Card>
         )}
       </div>
-    </div>
+    </main>
   )
 }

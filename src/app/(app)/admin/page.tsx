@@ -17,6 +17,8 @@ import {
   useAdminActions,
   useAdminLog,
 } from '@/hooks/useDAO'
+import { LoadError } from '@/components/LoadError'
+import { useAnnounceLoad } from '@/lib/useAnnounceLoad'
 import { formatToken, formatDate, formatThreshold } from '@/lib/utils'
 import { formatStellarAddress, isStellarAddress } from '@/lib/stellar'
 import { LoadingSpinner } from '@/components/ui/skeleton'
@@ -53,6 +55,18 @@ export default function AdminPage() {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <LoadingSpinner size="lg" />
+      </div>
+    )
+  }
+
+  if (userData.isError) {
+    // isAdmin reads false when the read fails — "Access Denied" would be a lie.
+    return (
+      <div className="mx-auto mt-8 max-w-md">
+        <LoadError
+          what="your admin status"
+          onRetry={userData.refetch}
+        />
       </div>
     )
   }
@@ -181,7 +195,7 @@ function OverviewTab({ stats }: { stats: ReturnType<typeof useDAOStats> }) {
 }
 
 function GovernanceTab({ stats }: { stats: ReturnType<typeof useDAOStats> }) {
-  const { admins, isLoading, refetch } = useAdmins()
+  const { admins, isLoading, isError: adminsError, refetch } = useAdmins()
   const { addAdmin, removeAdmin, setThreshold, isPending, isSuccess } = useAdminActions()
   const [newAdmin, setNewAdmin] = useState('')
   const [threshold, setThresholdInput] = useState('')
@@ -220,6 +234,7 @@ function GovernanceTab({ stats }: { stats: ReturnType<typeof useDAOStats> }) {
         </div>
         <div className="divide-y divide-border">
           {isLoading && <div className="px-6 py-4 text-sm text-muted-foreground">Loading…</div>}
+          {adminsError && <LoadError what="the admin list" onRetry={() => void refetch()} className="m-4" />}
           {admins.map((addr) => (
             <div key={addr} className="px-6 py-3 flex items-center justify-between">
               <span className="font-mono text-sm text-foreground">{formatStellarAddress(addr)}</span>
@@ -297,7 +312,8 @@ function GovernanceTab({ stats }: { stats: ReturnType<typeof useDAOStats> }) {
 }
 
 function ActivityTab() {
-  const { entries, isLoading } = useAdminLog(100)
+  const { entries, isLoading, isError, refetch } = useAdminLog(100)
+  useAnnounceLoad('Admin event history', isLoading, isError)
 
   return (
     <div className="bg-card rounded-lg border border-border">
@@ -311,7 +327,8 @@ function ActivityTab() {
       </div>
       <div className="divide-y divide-border">
         {isLoading && <div className="px-6 py-4 text-sm text-muted-foreground">Loading…</div>}
-        {!isLoading && entries.length === 0 && (
+        {isError && <LoadError what="the admin event history" onRetry={() => void refetch()} className="m-4" />}
+        {!isLoading && !isError && entries.length === 0 && (
           <div className="px-6 py-8 text-center text-muted-foreground">
             No admin/governance events indexed yet.
           </div>

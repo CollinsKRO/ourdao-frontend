@@ -8,6 +8,7 @@ import {
   type ActivityItem
 } from '@/lib/pushNotifications'
 import { useIsMobile } from '@/lib/responsive'
+import { LoadError } from '@/components/LoadError'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import {
   Bell, 
@@ -40,6 +41,8 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
 
   const {
     notifications,
+    isError: notificationsError,
+    refetch: refetchNotifications,
     unreadCount,
     markAsRead,
     markAllAsRead,
@@ -54,7 +57,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
     isListening
   } = useAutoNotifications()
 
-  const { activities } = useActivityFeed(50)
+  const { activities, isError: activityError, refetch: refetchActivity } = useActivityFeed(50)
   const { supported, permission } = usePushNotifications()
 
   // Auto-start listening when component mounts
@@ -253,7 +256,9 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
             <div className="flex-1 overflow-y-auto">
               {activeTab === 'notifications' ? (
                 <div className="divide-y divide-border">
-                  {filteredNotifications.length === 0 ? (
+                  {notificationsError && filteredNotifications.length === 0 ? (
+                    <LoadError what="notifications" onRetry={() => void refetchNotifications()} className="m-4" />
+                  ) : filteredNotifications.length === 0 ? (
                     <div className={`${isMobile ? 'p-6' : 'p-8'} text-center text-muted-foreground`}>
                       <Bell className={`${isMobile ? 'w-8 h-8' : 'w-12 h-12'} mx-auto mb-3 opacity-30`} />
                       <p className={isMobile ? 'text-sm' : ''}>No notifications yet</p>
@@ -354,7 +359,9 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
                 </div>
               ) : (
                 <div className="divide-y divide-border">
-                  {activities.length === 0 ? (
+                  {activityError && activities.length === 0 ? (
+                    <LoadError what="recent activity" onRetry={() => void refetchActivity()} className="m-4" />
+                  ) : activities.length === 0 ? (
                     <div className={`${isMobile ? 'p-6' : 'p-8'} text-center text-muted-foreground`}>
                       <Activity className={`${isMobile ? 'w-8 h-8' : 'w-12 h-12'} mx-auto mb-3 opacity-30`} />
                       <p className={isMobile ? 'text-sm' : ''}>No recent activity</p>

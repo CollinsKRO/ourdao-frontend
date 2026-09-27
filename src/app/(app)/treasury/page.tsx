@@ -27,6 +27,8 @@ import {
   useHasVoted,
   type UITreasuryProposal,
 } from '@/hooks/useDAO'
+import { LoadError } from '@/components/LoadError'
+import { useAnnounceLoad } from '@/lib/useAnnounceLoad'
 import { asBigInt } from '@/lib/dao-mappers'
 import { formatToken, parseToken } from '@/lib/utils'
 import { formatStellarAddress } from '@/lib/stellar'
@@ -150,7 +152,8 @@ export default function TreasuryPage() {
   const stats = useDAOStats()
   const myStake = useStake()
   const { stake, unstake, isPending: staking } = useStaking()
-  const { proposals, isLoading, hasMore, loadMore, isLoadingMore, hasErrors } = useTreasuryProposals()
+  const { proposals, isLoading, hasMore, loadMore, isLoadingMore, hasErrors, isError, refetch } = useTreasuryProposals()
+  useAnnounceLoad('Treasury proposals', isLoading, isError)
   const { voteOnTreasury, isPending: voting } = useTreasuryVoting()
 
   const [amount, setAmount] = useState('')
@@ -337,6 +340,8 @@ export default function TreasuryPage() {
                   <div key={i} className="skeleton h-20 w-full rounded-lg" />
                 ))}
               </div>
+            ) : isError && proposals.length === 0 ? (
+              <LoadError what="treasury proposals" onRetry={refetch} />
             ) : proposals.length === 0 ? (
               <div className="py-10 text-center">
                 <Banknote className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />

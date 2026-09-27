@@ -8,6 +8,14 @@ import { useWallet } from '@/lib/wallet'
 import { getTransactionUrl } from '@/lib/stellar'
 import { daoWrite, InvokeError, type InvokeResult } from '@/lib/dao-client'
 import { queryKeys } from '@/lib/query-keys'
+import { announce } from '@/lib/announce'
+
+// Write-status toasts are visual only. Status is announced by <LiveAnnouncer>
+// (src/lib/announce.ts): a toast is inserted with its content already in it,
+// which screen readers do not reliably announce, and an in-place update by id
+// would otherwise be announced a second time on top of ours. react-hot-toast
+// applies its own aria defaults per toast, so this must be passed per call.
+const SILENT_TOAST = { ariaProps: { role: 'status', 'aria-live': 'off' } } as const
 
 type OptimisticUpdate = {
   queryKey: QueryKey
@@ -43,6 +51,7 @@ export function useWriteAction() {
     setError(new Error('Signature request cancelled'))
     setRetryable(true)
     toast.error('Signature request cancelled')
+    announce('Signature request cancelled.', 'assertive')
   }, [])
 
   const run = useCallback(
@@ -54,6 +63,7 @@ export function useWriteAction() {
     ) => {
       if (!isConnected || !address) {
         toast.error('Connect your wallet first')
+        announce('Connect your wallet first.', 'assertive')
         throw new Error('Wallet not connected')
       }
       // Issue #241: block writes while the wallet is on the wrong network,
@@ -68,7 +78,9 @@ export function useWriteAction() {
       setError(null)
       setRetryable(false)
 
-      const toastId = toast.loading(`${label}…`)
+      const toastId = toast.loading(`${label}…`, SILENT_TOAST)
+      // Progress is polite: it must not interrupt whatever is being read.
+      announce(`${label} in progress.`)
       toastIdRef.current = toastId
 
       const controller = new AbortController()
@@ -92,6 +104,7 @@ export function useWriteAction() {
       try {
         const res = await fn(daoWrite(address, wrappedSignXDR))
         setSuccess(true)
+        announce(`${label} confirmed.`)
         toast.success(
           React.createElement(
             'span',
@@ -108,7 +121,7 @@ export function useWriteAction() {
               'View transaction'
             )
           ),
-          { id: toastId }
+          { id: toastId, ...SILENT_TOAST }
         )
         for (const queryKey of invalidates) {
           queryClient.invalidateQueries({ queryKey })
@@ -127,15 +140,19 @@ export function useWriteAction() {
         setError(e)
         setRetryable(retryable)
 
+        // A failure interrupts (assertive); the same text is shown in the toast.
+        let failure: string
         if (isTimeout) {
-          toast.error(`${label} timed out. Signature request took too long. You can try again.`, { id: toastId })
+          failure = `${label} timed out. Signature request took too long. You can try again.`
         } else if (isCancel) {
-          toast.error(`${label} signature cancelled.`, { id: toastId })
+          failure = `${label} signature cancelled.`
         } else if (retryable) {
-          toast.error(`${label} failed: ${e.message} You can try again.`, { id: toastId })
+          failure = `${label} failed: ${e.message} You can try again.`
         } else {
-          toast.error(`${label} failed: ${e.message}`, { id: toastId })
+          failure = `${label} failed: ${e.message}`
         }
+        toast.error(failure, { id: toastId, ...SILENT_TOAST })
+        announce(failure, 'assertive')
 
         throw e
       } finally {

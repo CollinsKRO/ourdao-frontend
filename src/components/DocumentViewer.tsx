@@ -200,10 +200,12 @@ export default function DocumentViewer({
           </h3>
           {onClose && (
             <button
+              type="button"
               onClick={onClose}
+              aria-label="Close"
               className="text-muted-foreground hover:text-foreground"
             >
-              <XMarkIcon className="h-5 w-5" />
+              <XMarkIcon className="h-5 w-5" aria-hidden="true" />
             </button>
           )}
         </div>
@@ -258,10 +260,12 @@ export default function DocumentViewer({
           )}
           {onClose && (
             <button
+              type="button"
               onClick={onClose}
+              aria-label="Close"
               className="p-2 text-muted-foreground hover:text-foreground"
             >
-              <XMarkIcon className="h-5 w-5" />
+              <XMarkIcon className="h-5 w-5" aria-hidden="true" />
             </button>
           )}
         </div>

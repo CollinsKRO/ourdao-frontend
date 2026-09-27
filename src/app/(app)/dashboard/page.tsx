@@ -17,6 +17,8 @@ import {
   TrophyIcon,
 } from '@heroicons/react/24/outline'
 import { useDAOStats, useUserData, useRewards, useDAOEvents, eventLabel } from '@/hooks/useDAO'
+import { LoadError } from '@/components/LoadError'
+import { useAnnounceLoad } from '@/lib/useAnnounceLoad'
 import { formatToken, formatDate } from '@/lib/utils'
 import { formatStellarAddress } from '@/lib/stellar'
 import { MEMBER_STATUS_LABELS, NON_MEMBER_LABEL } from '@/constants'
@@ -30,7 +32,8 @@ export default function DashboardPage() {
   const stats = useDAOStats()
   const userData = useUserData()
   const { claimRewards, claimYield, isPending, isSuccess } = useRewards()
-  const { events } = useDAOEvents()
+  const { events, isError: eventsError, refetch: refetchEvents } = useDAOEvents()
+  useAnnounceLoad('Dashboard', userData.isLoading, !!userData.isError)
   const isMobile = useIsMobile()
   const { getCardGridClass } = useResponsiveCardLayout()
 
@@ -39,10 +42,13 @@ export default function DashboardPage() {
     // this fires while isMember is still the "not yet known" default
     // (false), bouncing every legitimate member through /register on every
     // load (#69).
-    if (userData.isConnected && !userData.isLoading && !userData.isMember) {
+    // A failed read leaves isMember at its default (false), which is not
+    // "this wallet is not a member" — do not bounce a real member to
+    // /register because the RPC hiccuped.
+    if (userData.isConnected && !userData.isLoading && !userData.isError && !userData.isMember) {
       router.push('/register')
     }
-  }, [userData.isConnected, userData.isLoading, userData.isMember, router])
+  }, [userData.isConnected, userData.isLoading, userData.isError, userData.isMember, router])
 
   useEffect(() => {
     if (isSuccess) {
@@ -96,6 +102,17 @@ export default function DashboardPage() {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <LoadingSpinner size="lg" />
+      </div>
+    )
+  }
+
+  if (userData.isError) {
+    return (
+      <div className="mx-auto mt-8 max-w-md">
+        <LoadError
+          what="your membership data"
+          onRetry={userData.refetch}
+        />
       </div>
     )
   }
@@ -424,7 +441,9 @@ export default function DashboardPage() {
                 <CardDescription>Latest DAO events</CardDescription>
               </CardHeader>
               <CardContent>
-                {events.length > 0 ? (
+                {eventsError ? (
+                  <LoadError what="recent activity" onRetry={() => void refetchEvents()} />
+                ) : events.length > 0 ? (
                   <div className="space-y-3">
                     {events.slice(0, 5).map((event, index) => (
                       <div key={index} className="flex items-center space-x-3 text-sm">

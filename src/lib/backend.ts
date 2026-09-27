@@ -6,10 +6,24 @@
  * live member/treasury reads; the backend supplies history and aggregates the
  * chain can't cheaply serve (loan history, notifications, the event feed).
  *
- * Every call fails soft: if the backend is unreachable or not configured, the
- * helpers resolve to empty/null so the UI degrades to its on-chain-only state
- * rather than throwing.
+ * Reads degrade rather than crash the app, but they no longer disguise a
+ * failure as "no data": when the backend is not configured (preview mode) a
+ * read resolves to its empty fallback, but when it IS configured and the
+ * request fails (unreachable, CORS, non-2xx) the read rejects with a
+ * BackendError. TanStack Query surfaces that as `isError` on the hook, and the
+ * consumer renders a "couldn't load" state — an unreachable indexer and an
+ * empty loan list must not look the same to a member.
  */
+
+/** A configured backend could not be read (network failure or non-2xx). */
+export class BackendError extends Error {
+  readonly status: number | null
+  constructor(message: string, status: number | null = null) {
+    super(message)
+    this.name = 'BackendError'
+    this.status = status
+  }
+}
 
 export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || ''
 
@@ -169,22 +183,25 @@ const arrayOf =
 // None of these fetches set a timeout or abort signal, so a hung indexer leaves
 // a request pending indefinitely instead of degrading to the on-chain-only state.
 
-async function get<T>(path: string, fallback: T, validator?: Validator<T>): Promise<T> {
+async function get<T>(path: string, fallback: T): Promise<T> {
+  // Preview mode: nothing to read from, so the empty fallback is the truth.
   if (!isBackendConfigured()) return fallback
   const base = process.env.NEXT_PUBLIC_BACKEND_URL || ''
+  let res: Response
   try {
-    const res = await fetch(`${base}${path}`, {
+    res = await fetch(`${base}${path}`, {
       headers: { accept: 'application/json' },
       // Indexed data changes often; never serve a stale cache.
       cache: 'no-store',
     })
-    if (!res.ok) return fallback
-    const body = await res.json()
-    return !validator || validator(body) ? body : fallback
-  } catch {
-    // Backend down / CORS / network — degrade gracefully.
-    return fallback
+  } catch (cause) {
+    // Backend down / CORS / network.
+    throw new BackendError(
+      `Backend unreachable: ${cause instanceof Error ? cause.message : String(cause)}`
+    )
   }
+  if (!res.ok) throw new BackendError(`Backend responded ${res.status}`, res.status)
+  return (await res.json()) as T
 }
 
 /** PATCH with no body. Returns whether the backend accepted the mutation. */

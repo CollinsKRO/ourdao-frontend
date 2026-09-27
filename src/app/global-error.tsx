@@ -49,7 +49,7 @@ export default function GlobalError({
             }
           }
         `}</style>
-        <div
+        <main
           style={{
             minHeight: '100vh',
             display: 'flex',
@@ -94,7 +94,7 @@ export default function GlobalError({
               Try again
             </button>
           </div>
-        </div>
+        </main>
       </body>
     </html>
   )

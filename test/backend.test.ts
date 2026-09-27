@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { backend, isBackendConfigured } from '@/lib/backend'
+import { backend, BackendError, isBackendConfigured } from '@/lib/backend'
 
 function jsonResponse(body: unknown, ok = true) {
   return { ok, json: () => Promise.resolve(body) } as Response
@@ -25,19 +25,17 @@ describe('backend fetch wrappers', () => {
     expect(result).toEqual(stats)
   })
 
-  it('getStats falls back to null when the response is not ok', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(null, false))
-    expect(await backend.getStats()).toBeNull()
+  it('getStats rejects with a BackendError when the response is not ok', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503 } as Response)
+    await expect(backend.getStats()).rejects.toMatchObject({
+      name: 'BackendError',
+      status: 503,
+    })
   })
 
-  it('getStats falls back to null when the backend shape drifts', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ totalMembers: '5' }))
-    expect(await backend.getStats()).toBeNull()
-  })
-
-  it('getStats falls back to null when fetch itself throws (backend unreachable)', async () => {
+  it('getStats rejects with a BackendError when fetch itself throws (backend unreachable)', async () => {
     vi.mocked(fetch).mockRejectedValueOnce(new Error('network error'))
-    expect(await backend.getStats()).toBeNull()
+    await expect(backend.getStats()).rejects.toBeInstanceOf(BackendError)
   })
 
   it('getLoans without a borrower hits /api/loans with no query string', async () => {
@@ -55,9 +53,15 @@ describe('backend fetch wrappers', () => {
     )
   })
 
-  it('getLoans falls back to an empty array, not null, on failure', async () => {
+  it('getLoans rejects on failure instead of returning an empty list that looks like "no loans"', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(null, false))
+    await expect(backend.getLoans()).rejects.toBeInstanceOf(BackendError)
+  })
+
+  it('getLoans resolves to an empty array when the backend is not configured (preview mode)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BACKEND_URL', '')
     expect(await backend.getLoans()).toEqual([])
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it('getLoans falls back to an empty array when any loan row has the wrong shape', async () => {

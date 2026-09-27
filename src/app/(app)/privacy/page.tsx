@@ -9,11 +9,12 @@ import {
   InformationCircleIcon,
 } from '@heroicons/react/24/outline'
 import { useUserData, useTreasuryProposals } from '@/hooks/useDAO'
+import { LoadError } from '@/components/LoadError'
 import { PageHeader } from '@/components/PageHeader'
 
 export default function PrivacyPage() {
   const userData = useUserData()
-  const { proposals, isLoading } = useTreasuryProposals()
+  const { proposals, isLoading, isError, refetch } = useTreasuryProposals()
 
   if (!userData.isConnected) {
     return (
@@ -178,6 +179,8 @@ export default function PrivacyPage() {
           </h3>
           {isLoading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : isError ? (
+            <LoadError what="treasury proposal privacy counts" onRetry={refetch} />
           ) : (
             <div className="grid grid-cols-2 gap-4">
               <div>

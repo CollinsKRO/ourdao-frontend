@@ -23,6 +23,8 @@ import {
   useHasVoted,
   type UILoanProposal,
 } from '@/hooks/useDAO'
+import { LoadError } from '@/components/LoadError'
+import { useAnnounceLoad } from '@/lib/useAnnounceLoad'
 import { useNow } from '@/hooks/useNow'
 import { formatToken, formatDate, calculatePercentage } from '@/lib/utils'
 import { formatStellarAddress } from '@/lib/stellar'
@@ -240,7 +242,8 @@ function LoanProposalCard({
 export default function LoansPage() {
   const userData = useUserData()
   const { voteOnProposal, isPending } = useVoting()
-  const { proposals, isLoading, hasMore, loadMore, isLoadingMore, hasErrors } = useLoanProposals()
+  const { proposals, isLoading, hasMore, loadMore, isLoadingMore, hasErrors, isError, refetch } = useLoanProposals()
+  useAnnounceLoad('Loan proposals', isLoading, isError)
   const now = useNow()
 
   const [filters, setFilters] = useState({
@@ -452,6 +455,8 @@ export default function LoansPage() {
                 </Card>
               ))}
             </div>
+          ) : isError && proposals.length === 0 ? (
+            <LoadError what="loan proposals" onRetry={refetch} />
           ) : filteredProposals.length === 0 ? (
             <Card>
               <CardContent className="p-12 text-center">

@@ -27,6 +27,8 @@ import {
   type UILoanProposal,
   type UITreasuryProposal,
 } from '@/hooks/useDAO'
+import { LoadError } from '@/components/LoadError'
+import { useAnnounceLoad } from '@/lib/useAnnounceLoad'
 import { formatToken, formatThreshold } from '@/lib/utils'
 import { formatStellarAddress } from '@/lib/stellar'
 import { PROPOSAL_STATUS_LABELS, PROPOSAL_STATUS_AWAITING_FUNDS } from '@/constants'
@@ -226,6 +228,8 @@ export default function GovernancePage() {
     loadMore: loadMoreLoans,
     isLoadingMore: loadingMoreLoans,
     hasErrors: loanErrors,
+    isError: loanFailed,
+    refetch: refetchLoans,
   } = useLoanProposals()
   const {
     proposals: treasuryProposals,
@@ -234,7 +238,11 @@ export default function GovernancePage() {
     loadMore: loadMoreTreasury,
     isLoadingMore: loadingMoreTreasury,
     hasErrors: treasuryErrors,
+    isError: treasuryFailed,
+    refetch: refetchTreasury,
   } = useTreasuryProposals()
+  useAnnounceLoad('Loan proposals', loadingLoans, loanFailed)
+  useAnnounceLoad('Treasury proposals', loadingTreasury, treasuryFailed)
   const { voteOnProposal, isPending: votingLoan } = useVoting()
   const { voteOnTreasury, isPending: votingTreasury } = useTreasuryVoting()
 
@@ -328,6 +336,8 @@ export default function GovernancePage() {
               )}
               {loadingLoans ? (
                 <LoadingRows />
+              ) : loanFailed && loanProposals.length === 0 ? (
+                <LoadError what="loan proposals" onRetry={refetchLoans} />
               ) : loanProposals.length === 0 ? (
                 <EmptyState label="No loan proposals yet." />
               ) : (
@@ -376,6 +386,8 @@ export default function GovernancePage() {
               )}
               {loadingTreasury ? (
                 <LoadingRows />
+              ) : treasuryFailed && treasuryProposals.length === 0 ? (
+                <LoadError what="treasury proposals" onRetry={refetchTreasury} />
               ) : treasuryProposals.length === 0 ? (
                 <EmptyState label="No treasury withdrawals yet." />
               ) : (

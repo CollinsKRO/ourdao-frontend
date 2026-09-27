@@ -8,7 +8,7 @@
  * persists across navigation instead of remounting per page. A page's own
  * title/subtitle/actions header is <PageHeader>, rendered by the page itself.
  */
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -31,6 +31,7 @@ import { useUserData, useDAOStats } from '@/hooks/useDAO'
 import { buildLabel } from '@/lib/build-info'
 import { isContractConfigured } from '@/lib/stellar'
 import { cn } from '@/lib/utils'
+import { MAIN_CONTENT_ID } from '@/lib/a11y'
 
 interface NavItem {
   name: string
@@ -115,6 +116,27 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const stats = useDAOStats()
+  const pathname = usePathname()
+  const mainRef = useRef<HTMLElement>(null)
+  const previousPathname = useRef(pathname)
+
+  // Client-side navigation swaps the page without a document load, so the
+  // browser leaves focus on the (now stale) link that was clicked and a
+  // screen-reader user is never told the page changed. On a real route change
+  // move focus to the new page's heading (or <main> if it has none). Next's
+  // built-in route announcer reads the new document title. Skipped on first
+  // render so the initial load keeps the browser's native focus behaviour.
+  useEffect(() => {
+    if (previousPathname.current === pathname) return
+    previousPathname.current = pathname
+    const main = mainRef.current
+    if (!main) return
+    const heading = main.querySelector<HTMLElement>('h1')
+    const target = heading ?? main
+    if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1')
+    target.focus({ preventScroll: true })
+    window.scrollTo?.({ top: 0 })
+  }, [pathname])
 
   return (
     // Wraps the whole shell (not just the drawer) so SheetTrigger — deep in
@@ -204,7 +226,12 @@ export function AppShell({ children }: AppShellProps) {
         </SheetContent>
 
         {/* Main content */}
-        <main id="main-content" className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <main
+          id={MAIN_CONTENT_ID}
+          ref={mainRef}
+          tabIndex={-1}
+          className="min-w-0 flex-1 px-4 py-6 focus:outline-none sm:px-6 lg:px-8 [&_h1:focus]:outline-none"
+        >
           {children}
         </main>
       </div>

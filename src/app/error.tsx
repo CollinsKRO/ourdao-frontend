@@ -2,7 +2,9 @@
 
 import { useEffect } from 'react'
 import Link from 'next/link'
+import { useQueryErrorResetBoundary } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
+import { MAIN_CONTENT_ID } from '@/lib/a11y'
 import { reportError } from '@/lib/error-reporting'
 
 /**
@@ -19,6 +21,8 @@ export default function Error({
   error: Error & { digest?: string }
   reset: () => void
 }) {
+  const { reset: resetQueries } = useQueryErrorResetBoundary()
+
   useEffect(() => {
     console.error('Route error boundary caught:', error)
     // Subject to the member's error-reporting opt-in (#247) — see
@@ -28,7 +32,7 @@ export default function Error({
   }, [error])
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex min-h-screen items-center justify-center bg-background px-4 focus:outline-none">
       <div className="w-full max-w-md rounded-xl border border-border bg-card text-card-foreground p-6 text-center shadow-sm">
         <h1 className="text-lg font-semibold text-foreground">This page couldn&apos;t load</h1>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -41,12 +45,21 @@ export default function Error({
           </p>
         )}
         <div className="mt-5 flex justify-center gap-2">
-          <Button onClick={reset}>Try again</Button>
+          <Button
+            onClick={() => {
+              // A boundary that was tripped by a failed query re-throws the
+              // cached error on remount unless the query error is reset too.
+              resetQueries()
+              reset()
+            }}
+          >
+            Try again
+          </Button>
           <Button asChild variant="outline">
             <Link href="/dashboard">Back to Dashboard</Link>
           </Button>
         </div>
       </div>
-    </div>
+    </main>
   )
 }
