@@ -65,7 +65,12 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # Stamp build identity into the bundle (src/lib/build-info.ts) — the UI
+      # badge uses it so a bug report can name the exact build.
       - run: npm run build
+        env:
+          OURDAO_BUILD_COMMIT: ${{ github.sha }}
+          OURDAO_BUILD_TIME: ${{ github.event.head_commit.timestamp || github.run_started_at }}
 
   # Separate from lint/typecheck/test/build on purpose: a new advisory landing
   # in the tree affects every open PR at once, regardless of what that PR

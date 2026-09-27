@@ -28,6 +28,12 @@ vi.mock('@/components/NetworkBadge', () => ({
   NetworkBadge: () => null,
 }))
 
+// Header sibling like NetworkBadge above; the real badge pulls CONTRACT_ID
+// from the partial @/lib/stellar mock, which these drawer tests don't cover.
+vi.mock('@/components/BuildBadge', () => ({
+  BuildBadge: () => null,
+}))
+
 vi.mock('@/components/NotificationCenter', () => ({
   default: () => <div data-testid="notification-center-stub" />,
 }))

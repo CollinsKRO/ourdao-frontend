@@ -93,6 +93,15 @@ function buildCsp(): string {
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   turbopack: {},
+  // Inline build identity (issue #269) into the client bundle at build time.
+  // Version comes from package.json; commit/time are set by CI (see
+  // .github/workflows/ci.yml and docs/release.md). NEXT_PUBLIC_BUILD_* read by
+  // src/lib/build-info.ts.
+  env: {
+    NEXT_PUBLIC_BUILD_VERSION: process.env.npm_package_version || '0.0.0-dev',
+    NEXT_PUBLIC_BUILD_COMMIT: process.env.OURDAO_BUILD_COMMIT || '',
+    NEXT_PUBLIC_BUILD_TIME: process.env.OURDAO_BUILD_TIME || '',
+  },
   async headers() {
     const csp = buildCsp();
     return [

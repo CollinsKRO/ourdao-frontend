@@ -21,6 +21,7 @@ import {
   Menu,
   TriangleAlert,
 } from 'lucide-react'
+import { BuildBadge } from '@/components/BuildBadge'
 import { ConnectButton } from '@/components/ConnectButton'
 import { NetworkBadge } from '@/components/NetworkBadge'
 import NotificationCenter from '@/components/NotificationCenter'
@@ -133,6 +134,7 @@ export function AppShell({ children }: AppShellProps) {
           </SheetTrigger>
           <BrandMark />
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            <BuildBadge />
             <NetworkBadge />
             <ThemeToggle />
             <NotificationCenter />
