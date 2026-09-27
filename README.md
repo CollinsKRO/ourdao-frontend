@@ -37,6 +37,7 @@ This repository is one of three that make up OurDAO:
 - [Licence Policy](#licence-policy)
 - [Scripts](#scripts)
 - [Testing](#testing)
+- [Accessibility](#accessibility)
 - [What's real vs. not](#whats-real-vs-not)
 - [Security notes](#security-notes)
 - [Roadmap](#roadmap)
@@ -111,6 +112,105 @@ src/
 `AppShell` (header + sidebar navigation) is rendered once by `(app)/layout.tsx`, so it persists across navigation within that group instead of remounting per page. Pages under `(app)/` render `<PageHeader title=... subtitle=... actions={...} />` for their own title block — a layout only renders `{children}`, so it can't take page-specific props the way the old per-page `<AppShell>` wrapper did. The landing page and `/register` stay outside the group, with their own standalone headers, since they're meant to work before a user has any DAO context.
 
 Data flows through [TanStack Query](https://tanstack.com/query) throughout: `useDAO.ts`'s hooks wrap live Soroban contract reads (the contract itself has no queryable lists, so proposal/loan enumeration counts come from the indexer, then each item is fetched live by id straight from the contract — the count is an off-chain hint, the data is always on-chain-sourced) and Freighter-signed writes; `useNotifications.ts` wraps the backend's polled REST endpoints.
+
+### Data flow
+
+Reads and writes take different routes, and the two routes end at places with
+different authority. The single most important thing to hold onto: **a count
+from the indexer is a hint about what exists, but the record itself is always
+read back from the contract.** The contract has no queryable lists, so the
+frontend asks the indexer how many proposals there are and then fetches each one
+by id straight from the chain.
+
+```
+  ══  authoritative, from the chain          ──  indexed, from ourdao-backend
+      (simulated read-only, never submitted)      (may lag the chain)
+```
+
+#### Read path
+
+```
+  page / component
+        │  useLoanProposals(), useDAOStats(), useLoan(id) …
+        ▼
+  ┌──────────────────────────────────────────────────────────────┐
+  │  src/hooks/dao/  reads.ts · proposal-reads.ts · enumeration.ts  │
+  │  TanStack Query; every key lives in src/lib/query-keys.ts      │
+  └────────────┬─────────────────────────────────┬─────────────────┘
+               │ daoRead.*                       │ backend.*
+               ▼                                 ▼
+  ┌────────────────────────────┐     ┌────────────────────────────┐
+  │  src/lib/dao-client.ts     │     │  src/lib/backend.ts        │
+  │  simulateTransaction       │     │  fetch(BACKEND_URL)        │
+  └────────────┬───────────────┘     └─────────────┬──────────────┘
+               │                                   │
+  ═════════════▼═════════════════      ────────────▼────────────────
+  ██  Soroban RPC                   ░░░  ourdao-backend (indexer)
+  ██  contract state                ░░░  counts, event log, stats,
+  ██  authoritative                 ░░░  user loan lists, admin log
+  ══════════════════════════════      ░░░  a hint, not the record
+```
+
+The hybrid enumeration path, which is the one worth tracing by hand:
+
+```
+  backend.getStats() ──▶ count          ──▶ "there are N proposals"
+  daoRead.getLoanProposal(id) ──▶ ──▶   the actual proposal, per id
+  pagination walks backwards from count - 1, newest id first
+```
+
+A stale count therefore costs a page, never correctness: the count is only used
+to decide which ids to ask for.
+
+#### Write path
+
+Everything here is client-side — see the wallet boundary below.
+
+```
+  page / component
+        │  vote(), stake(), requestLoan() …
+        ▼
+  ┌──────────────────────────────────────────────────────────────┐
+  │  src/hooks/dao/writes.ts — useWriteAction().run()            │
+  │  declares its own invalidates[] and optional optimistic       │
+  │  updates, and rolls the optimistic ones back if the write     │
+  │  fails or is cancelled.                                       │
+  └────────────┬─────────────────────────────────────────────────┘
+               │  daoWrite(address, signXDR)
+               ▼
+  ┌────────────────────────────┐          ┌──────────────────────┐
+  │  src/lib/dao-client.ts     │  sign    │  Freighter extension │
+  │  builds the transaction    │ ───────▶ │  (user approves)     │
+  └────────────┬───────────────┘          └──────────┬───────────┘
+               │  invoke(): sendTransaction, then poll          │
+               │  getTransaction until final                   │
+  ═════════════▼═════════════════      ───────────────────────────
+  ██  Soroban RPC                   ░░░  once confirmed:
+  ██  state is now changed          ░░░  invalidate every key the
+  ██  authoritative                 ░░░  call site declared
+  ══════════════════════════════      ░░░  stale data refetches
+```
+
+#### The wallet boundary
+
+`src/lib/wallet.tsx` is `'use client'`, and so is every hook that imports it
+(`writes.ts`, and the wallet-scoped reads). That is the line deciding what can be
+server-rendered:
+
+- **Server-renderable:** anything that only reaches `dao-client.ts` or
+  `backend.ts` — public stats, thresholds, loan policy, proposal counts and
+  proposal bodies.
+- **Client-only:** anything that calls `useWallet()` — connect state, signing,
+  and every member action.
+
+Wallet-scoped cache keys are the ones carrying an address: `userData`,
+`userLoans`, `hasVoted`, `stake`, `document`, `notifications` — collected as
+`allWalletScopedQueryKeys()` in `src/lib/query-keys.ts`. Most also have a
+`…Disabled` variant keyed on `null` (`document` is the exception), so a
+disconnected visitor gets a disabled query instead of a cached answer left over
+from the last wallet that was connected. Connecting, disconnecting and switching
+accounts all invalidate exactly that list, which is why it is exported as one
+group rather than repeated at each call site.
 
 ## Where the Stellar integration lives
 
@@ -187,7 +287,7 @@ npm test          # vitest
 
 ## Testing
 
-Vitest + Testing Library, jsdom by default (pure-logic suites that don't need the DOM, like the Soroban ScVal builders, opt into the Node environment per-file via `// @vitest-environment node`). Coverage: `dao-client.ts`'s ScVal builders and `policyToScVal`, `backend.ts`'s fetch wrappers (including its fail-soft-on-error behavior), `useDAO.ts`'s pure mapping helpers (including `mapLoan`, the real disbursed-loan mapper), `useNotifications.ts`'s hooks, and `useNow.ts`'s `useSyncExternalStore` contract (using fake timers, since the underlying bug it guards against — an infinite render loop — doesn't reproduce reliably just by rendering in jsdom). CI runs lint, typecheck, test, and build on every push/PR — see `.github/workflows/ci.yml`. Two more jobs run alongside, kept separate from those four so an unrelated advisory or a generous, PR-controllable size budget never blocks a PR that has nothing to do with either: a dependency `audit` (see [Dependency hygiene](#security-notes)) that never fails the run (warns instead), and a `bundle-size` check that compares the client JS/CSS shipped from `.next/static` against the latest `main` baseline, only failing on a >5%-and->10 KB gzip regression.
+Vitest + Testing Library, jsdom by default (pure-logic suites that don't need the DOM, like the Soroban ScVal builders, opt into the Node environment per-file via `// @vitest-environment node`). Coverage: `dao-client.ts`'s ScVal builders and `policyToScVal`, `backend.ts`'s fetch wrappers (including its fail-soft-on-error behavior), `useDAO.ts`'s pure mapping helpers (including `mapLoan`, the real disbursed-loan mapper), `useNotifications.ts`'s hooks, and `useNow.ts`'s `useSyncExternalStore` contract (using fake timers, since the underlying bug it guards against — an infinite render loop — doesn't reproduce reliably just by rendering in jsdom). CI runs lint, typecheck, test, and build on every push/PR — see `.github/workflows/ci.yml`. Two more jobs run alongside, kept separate from those four so an unrelated advisory or a generous, PR-controllable size budget never blocks a PR that has nothing to do with either: a dependency `audit` (see [Dependency hygiene](#security-notes)) that never fails the run (warns instead), and a `bundle-size` check that compares the client JS/CSS shipped from `.next/static` against the latest `main` baseline, only failing on a >5%-and->10 KB gzip regression. The same job reports which packages those bytes belong to, with a per-package change against `main`, so a regression can be attributed without a local reproduction — see [docs/bundle-composition.md](docs/bundle-composition.md).
 
 ## Architecture & Rendering Performance
 
@@ -221,6 +321,36 @@ Lists in OurDAO (loan proposals, governance proposals, treasury withdrawals, not
 ### Polling Gating & Off-Chain Query Policy (#242)
 
 All queries to `ourdao-backend` (loan history, notifications, activity feed, stats) are gated on `isBackendConfigured()`. When no backend is configured or when a connected user is not a DAO member, loan history queries are disabled to prevent unnecessary 15-second polling loops. Member registration and loan submission mutations explicitly invalidate cache keys (`queryKeys.userData`, `queryKeys.userLoans`), ensuring newly joined members or newly created loans reflect instantly in the UI.
+
+## Accessibility
+
+**Target: [WCAG 2.2 Level AA](https://www.w3.org/TR/WCAG22/).** Stating a target
+is not the same as meeting it, so this app does not claim conformance yet. The
+full audit — every Level A and AA criterion marked pass, partial, fail or
+untested, with evidence — is in
+[docs/accessibility-statement.md](docs/accessibility-statement.md), which also
+lists the known gaps rather than only the successes.
+
+Where it stands: **14 of 55** Level A/AA criteria verified, **5 known failures**,
+and **16 with no evidence either way**. The untested ones are the honest part —
+automated checks currently cover five components, not every route.
+
+| Issue | Criterion | Gap |
+| --- | --- | --- |
+| [#353](https://github.com/ourdao/ourdao-frontend/issues/353) | 1.3.4 Orientation | Web manifest locks the app to portrait. |
+| [#321](https://github.com/ourdao/ourdao-frontend/issues/321) | 1.4.4 Resize Text | Viewport disables pinch-zoom. |
+| [#352](https://github.com/ourdao/ourdao-frontend/issues/352) | 2.4.2 Page Titled | One tab title for every route. |
+| [#360](https://github.com/ourdao/ourdao-frontend/issues/360) | 1.3.1, 3.3.2, 4.1.2 | Shared form components with correct label association. |
+| [#375](https://github.com/ourdao/ourdao-frontend/issues/375) | several | Automated checks do not cover the whole app yet. |
+
+Fixing those gaps is tracked on the individual issues, not here. What runs in CI
+today: `eslint-plugin-jsx-a11y` (recommended) with `--max-warnings=0` on every
+source file; `axe-core` against rendered output in `test/a11y.test.tsx`, failing
+on any violation at any impact level with no rule disabled and no baseline to
+update; direct role and name assertions for what `axe` cannot express; and
+`test/contrast.test.ts` for AA contrast in both themes. Component-level triage
+from [#238](https://github.com/ourdao/ourdao-frontend/issues/238) is in
+[docs/a11y-audit.md](docs/a11y-audit.md).
 
 ## What's real vs. not
 

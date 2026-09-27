@@ -4,6 +4,7 @@
  *
  * @see https://github.com/ourdao/ourdao-contracts#error-codes
  */
+import { logger } from '@/lib/logger'
 export const CONTRACT_ERROR_MESSAGES: Record<number, string> = {
   // lifecycle / config
   1: 'This DAO has already been initialized.',
@@ -93,7 +94,7 @@ export function parseContractErrorCode(error: unknown): number | null {
  * The raw error is always logged to the console for debugging.
  */
 export function formatContractError(error: unknown): string {
-  console.error('[contract-error]', error)
+  logger.error('[contract-error]', { error })
   const code = parseContractErrorCode(error)
   if (code !== null) {
     return contractErrorMessage(code)

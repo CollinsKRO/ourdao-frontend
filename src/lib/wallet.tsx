@@ -1,5 +1,6 @@
 'use client'
 
+import { logger } from '@/lib/logger'
 import {
   createContext,
   useCallback,
@@ -74,37 +75,37 @@ const WalletContext = createContext<WalletContextValue | undefined>(undefined)
 // `{ address }` vs. `{ address, error }`). These normalize both worlds.
 export function readAddress(res: unknown): { address: string; error?: string; branch: 'string' | 'object_address' | 'object_error' | 'unknown' } {
   if (typeof res === 'string') {
-    console.info('[Wallet] readAddress branch: string')
+    logger.info('[Wallet] readAddress branch: string')
     return { address: res, branch: 'string' }
   }
   const r = (res || {}) as { address?: string; error?: unknown }
   if (r.error) {
-    console.warn(`[Wallet] readAddress branch: object_error - ${String(r.error)}`)
+    logger.warn('[Wallet] readAddress branch: object_error', { error: String(r.error) })
     return { address: r.address || '', error: String(r.error), branch: 'object_error' }
   }
   if (typeof r.address === 'string') {
-    console.info('[Wallet] readAddress branch: object_address')
+    logger.info('[Wallet] readAddress branch: object_address')
     return { address: r.address, branch: 'object_address' }
   }
-  console.warn('[Wallet] readAddress branch: unknown response shape', res)
+  logger.warn('[Wallet] readAddress branch: unknown response shape', { response: res })
   return { address: '', branch: 'unknown' }
 }
 
 export function readSigned(res: unknown): { signedTxXdr: string; error?: string; branch: 'string' | 'object_signed' | 'object_error' | 'unknown' } {
   if (typeof res === 'string') {
-    console.info('[Wallet] readSigned branch: string')
+    logger.info('[Wallet] readSigned branch: string')
     return { signedTxXdr: res, branch: 'string' }
   }
   const r = (res || {}) as { signedTxXdr?: string; error?: unknown }
   if (r.error) {
-    console.warn(`[Wallet] readSigned branch: object_error - ${String(r.error)}`)
+    logger.warn('[Wallet] readSigned branch: object_error', { error: String(r.error) })
     return { signedTxXdr: r.signedTxXdr || '', error: String(r.error), branch: 'object_error' }
   }
   if (typeof r.signedTxXdr === 'string') {
-    console.info('[Wallet] readSigned branch: object_signed')
+    logger.info('[Wallet] readSigned branch: object_signed')
     return { signedTxXdr: r.signedTxXdr, branch: 'object_signed' }
   }
-  console.warn('[Wallet] readSigned branch: unknown response shape', res)
+  logger.warn('[Wallet] readSigned branch: unknown response shape')
   return { signedTxXdr: '', branch: 'unknown' }
 }
 
@@ -190,7 +191,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           const supported = isVersionAtLeast(ver, MIN_FREIGHTER_VERSION)
           setIsVersionSupported(supported)
           if (!supported) {
-            console.warn(`[Wallet] Freighter version ${ver} is below minimum supported version ${MIN_FREIGHTER_VERSION}`)
+            logger.warn('[Wallet] Freighter version below minimum', { version: ver, minimum: MIN_FREIGHTER_VERSION })
           }
           return ver
         }
@@ -205,7 +206,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         const supported = isVersionAtLeast(ver, MIN_FREIGHTER_VERSION)
         setIsVersionSupported(supported)
         if (!supported) {
-          console.warn(`[Wallet] Freighter version ${ver} is below minimum supported version ${MIN_FREIGHTER_VERSION}`)
+          logger.warn('[Wallet] Freighter version below minimum', { version: ver, minimum: MIN_FREIGHTER_VERSION })
         }
         return ver
       }

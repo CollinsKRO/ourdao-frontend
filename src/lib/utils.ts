@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { logger } from '@/lib/logger'
 
 // clsx alone only concatenates — it doesn't know that e.g. bg-white and
 // bg-primary conflict, so which one visually wins depends on Tailwind's
@@ -77,7 +78,7 @@ export function formatToken(
 
     return `${neg ? '-' : ''}${whole}${frac ? '.' + frac : ''}`
   } catch (err) {
-    console.error('formatToken failed:', err, { value, decimals, displayDecimals })
+    logger.error('formatToken failed', { err, value, decimals, displayDecimals })
     return '—'
   }
 }

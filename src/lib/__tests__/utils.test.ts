@@ -110,12 +110,12 @@ describe('formatToken — failure path is distinct from genuine zero', () => {
     spy.mockRestore()
   })
 
-  it('failure is logged to console.error', () => {
+  it('failure is logged through the logger (#267)', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     formatToken('garbage')
+    // The logger prefixes the level and carries the detail as scrubbed context.
     expect(spy).toHaveBeenCalledWith(
-      'formatToken failed:',
-      expect.any(Error),
+      '[error] formatToken failed',
       expect.objectContaining({ value: 'garbage' })
     )
     spy.mockRestore()

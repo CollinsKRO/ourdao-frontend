@@ -13,6 +13,7 @@
  * silently undoes (#306). Removal stays client-side only, since the backend has
  * no delete endpoint.
  */
+import { logger } from '@/lib/logger'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useWallet } from '@/lib/wallet'
@@ -210,7 +211,7 @@ export function useAutoNotifications() {
       try {
         await Notification.requestPermission()
       } catch (err) {
-        console.warn('Notification permission request failed:', err)
+        logger.warn('Notification permission request failed', { err })
       }
     }
   }, [])

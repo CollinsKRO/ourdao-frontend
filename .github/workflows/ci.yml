@@ -223,7 +223,11 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # ANALYZE_BUNDLE=1 turns on productionBrowserSourceMaps (next.config.ts) so
+      # the composition report can attribute shipped bytes to packages (#266).
       - run: npm run build
+        env:
+          ANALYZE_BUNDLE: "1"
       - run: node scripts/bundle-size.mjs measure
       - name: Restore baseline from main
         if: github.ref != 'refs/heads/main'
@@ -233,17 +237,43 @@ jobs:
           key: bundle-size-baseline-unused
           restore-keys: |
             bundle-size-baseline-
+      - name: Restore composition baseline from main
+        if: github.ref != 'refs/heads/main'
+        uses: actions/cache/restore@v6
+        with:
+          path: bundle-composition-baseline.json
+          key: bundle-composition-baseline-unused
+          restore-keys: |
+            bundle-composition-baseline-
       - name: Compare against baseline and write summary
         run: node scripts/bundle-size.mjs report
       - name: Save baseline for main
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: cp bundle-size-current.json bundle-size-baseline.json
+        run: |
+          cp bundle-size-current.json bundle-size-baseline.json
+          cp bundle-composition-current.json bundle-composition-baseline.json
       - name: Cache baseline for main
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: actions/cache/save@v6
         with:
           path: bundle-size-baseline.json
           key: bundle-size-baseline-${{ github.sha }}
+      - name: Cache composition baseline for main
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache/save@v6
+        with:
+          path: bundle-composition-baseline.json
+          key: bundle-composition-baseline-${{ github.sha }}
+      # Uploaded on every run so a reviewer can diff composition without
+      # rebuilding locally -- the point of #266 is attributing a regression
+      # without a local reproduction.
+      - name: Upload composition report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-composition
+          path: bundle-composition-current.json
+          if-no-files-found: ignore
 
   # Runs on every PR (same cadence as bundle-size, not scheduled) because
   # this is a small app where a regression is easy to introduce in any given

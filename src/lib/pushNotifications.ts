@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { useCallback, useSyncExternalStore } from 'react'
 
 // Shared shapes for backend-derived notifications/activity (see
@@ -78,7 +79,7 @@ export const usePushNotifications = () => {
       notifyPermissionChange()
       return result === 'granted'
     } catch (err) {
-      console.warn('Notification permission request failed:', err)
+      logger.warn('Notification permission request failed', { err })
       return false
     }
   }, [supported])

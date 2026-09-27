@@ -59,6 +59,16 @@ export { buildImageRemotePatterns };
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   turbopack: {},
+  // Emits `.map` files beside the client chunks in `.next/static`, which is
+  // what lets `scripts/bundle-size.mjs composition` attribute shipped bytes to
+  // the package that produced them (#266) — Turbopack's minified chunks name
+  // no modules, so without a map a size regression can be detected but not
+  // explained.
+  //
+  // Opt-in rather than always on: source maps for the whole client roughly
+  // double build output and add time, and only the bundle job needs them. The
+  // `bundle-size` npm script and the CI job set ANALYZE_BUNDLE=1.
+  productionBrowserSourceMaps: process.env.ANALYZE_BUNDLE === "1",
   // Surfaced in the UI by src/lib/build-info.ts so a bug report can name the
   // build and match it to a CHANGELOG.md entry (#250). The SHA comes from the
   // deploy platform (Vercel) or CI (GitHub Actions); absent locally.

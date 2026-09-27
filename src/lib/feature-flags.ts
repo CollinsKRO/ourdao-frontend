@@ -17,6 +17,7 @@
  * change has to be revocable *without* a deploy, the contract is the lever
  * (pause / unpause from the admin page), not a flag.
  */
+import { logger } from '@/lib/logger'
 
 /**
  * The env var holding the comma-separated names of the flags to enable.
@@ -96,7 +97,7 @@ export function isFeatureEnabled(flag: string): boolean {
 if (process.env.NODE_ENV !== 'production') {
   for (const name of ENABLED_FLAGS) {
     if (!isDeclaredFlag(name)) {
-      console.warn(
+      logger.warn(
         `[FeatureFlags] "${name}" is enabled in ${FEATURE_FLAGS_ENV_VAR} but not declared ` +
           'in FEATURE_FLAGS (src/lib/feature-flags.ts) — no code will act on it.',
       )

@@ -8,7 +8,7 @@ describe('Issue #220 — Freighter version detection & shape normalizers', () =>
     expect(res.address).toBe('GABC123')
     expect(res.error).toBeUndefined()
     expect(res.branch).toBe('string')
-    expect(infoSpy).toHaveBeenCalledWith('[Wallet] readAddress branch: string')
+    expect(infoSpy).toHaveBeenCalledWith('[info] [Wallet] readAddress branch: string')
     infoSpy.mockRestore()
   });
 
@@ -27,7 +27,7 @@ describe('Issue #220 — Freighter version detection & shape normalizers', () =>
     expect(res.address).toBe('')
     expect(res.error).toBe('Access denied')
     expect(res.branch).toBe('object_error')
-    expect(warnSpy).toHaveBeenCalledWith('[Wallet] readAddress branch: object_error - Access denied')
+    expect(warnSpy).toHaveBeenCalledWith('[warn] [Wallet] readAddress branch: object_error', { error: 'Access denied' })
     warnSpy.mockRestore()
   });
 
