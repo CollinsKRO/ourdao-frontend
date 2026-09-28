@@ -15,6 +15,7 @@
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "coverage:report": "vitest run --coverage --coverage.reporter=text",
+    "test:visual": "playwright test",
     "audit": "audit-ci --config ./audit-ci.jsonc",
     "bundle-size": "node scripts/bundle-size.mjs measure && node scripts/bundle-size.mjs report",
     "depcheck": "depcheck",
@@ -46,6 +47,7 @@
   },
   "devDependencies": {
     "@lhci/cli": "^0.14.0",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",

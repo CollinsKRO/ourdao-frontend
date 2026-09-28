@@ -127,6 +127,32 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+  # Screenshot baselines for the main routes in both themes × two viewports
+  # (#270). An unreviewed visual change fails this job and, through `status`,
+  # the PR — updating a baseline is a deliberate, reviewed act. Failed runs
+  # upload the actual/expected/diff PNGs as the `visual-diffs` artifact.
+  # Policy and baseline-update instructions: docs/visual-tests.md
+  visual:
+    name: Visual regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:visual
+      - name: Upload diffs and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: visual-diffs
+          path: test-results/
+          retention-days: 7
+
   # Separate from lint/typecheck/test/build on purpose: a new advisory landing
   # in the tree affects every open PR at once, regardless of what that PR
   # changes. Keeping it out of `status`'s needs and off continue-on-error
@@ -304,7 +330,7 @@ jobs:
   status:
     name: Record status
     if: always()
-    needs: [lint, typecheck, test, coverage, build]
+    needs: [lint, typecheck, test, coverage, build, visual]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -319,7 +345,8 @@ jobs:
               "typecheck": "${{ needs.typecheck.result }}",
               "test": "${{ needs.test.result }}",
               "coverage": "${{ needs.coverage.result }}",
-              "build": "${{ needs.build.result }}"
+              "build": "${{ needs.build.result }}",
+              "visual": "${{ needs.visual.result }}"
             }
           }
           EOF
