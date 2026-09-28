@@ -19,6 +19,7 @@ import {
 } from '@/hooks/useDAO'
 import { formatToken, formatDate, formatThreshold } from '@/lib/utils'
 import { formatStellarAddress, isStellarAddress } from '@/lib/stellar'
+import { MESSAGES } from '@/lib/messages'
 import { LoadingSpinner } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/PageHeader'
 
@@ -39,8 +40,8 @@ export default function AdminPage() {
     return (
       <GuardMessage
         icon={<ExclamationTriangleIcon className="h-12 w-12 text-yellow-500 dark:text-yellow-400 mx-auto mb-4" />}
-        title="Wallet Not Connected"
-        message="Please connect your wallet to access the admin panel."
+        title={MESSAGES.empty.walletNotConnected}
+        message={MESSAGES.empty.gates.admin}
       />
     )
   }
@@ -61,7 +62,7 @@ export default function AdminPage() {
     return (
       <GuardMessage
         icon={<ExclamationTriangleIcon className="h-12 w-12 text-red-500 dark:text-red-400 mx-auto mb-4" />}
-        title="Access Denied"
+        title={MESSAGES.empty.gates.accessDenied}
         message="You need admin privileges to access this panel."
       />
     )
@@ -251,7 +252,7 @@ function GovernanceTab({ stats }: { stats: ReturnType<typeof useDAOStats> }) {
             />
             {newAdminError && (
               <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                Enter a valid Stellar destination address (G… or C…)
+                {MESSAGES.validation.stellarAddress}
               </p>
             )}
           </div>
@@ -313,7 +314,7 @@ function ActivityTab() {
         {isLoading && <div className="px-6 py-4 text-sm text-muted-foreground">Loading…</div>}
         {!isLoading && entries.length === 0 && (
           <div className="px-6 py-8 text-center text-muted-foreground">
-            No admin/governance events indexed yet.
+            {MESSAGES.empty.adminEvents}
           </div>
         )}
         {entries.map((entry) => (

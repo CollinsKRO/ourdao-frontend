@@ -20,6 +20,7 @@ import {
 import { Networks } from '@stellar/stellar-sdk'
 import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
+import { MESSAGES } from './messages'
 import { NETWORK_PASSPHRASE } from './stellar'
 
 export const MIN_FREIGHTER_VERSION = '2.0.0'
@@ -318,14 +319,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     try {
       const version = await checkVersion()
       if (version && !isVersionAtLeast(version, MIN_FREIGHTER_VERSION)) {
-        toast.error(`Outdated Freighter extension (${version}). Minimum supported version is ${MIN_FREIGHTER_VERSION}.`)
+        toast.error(MESSAGES.wallet.outdatedExtension(version, MIN_FREIGHTER_VERSION))
       }
       const { address: addr, error } = readAddress(await requestAccess())
       if (error || !addr) {
         toast.error(
           error
-            ? `Wallet connection failed: ${error}`
-            : 'Could not connect. Is the Freighter extension installed?'
+            ? MESSAGES.wallet.connectionFailed(error)
+            : MESSAGES.wallet.notInstalled
         )
         return
       }
@@ -339,9 +340,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       } catch {
         /* Network check will be retried by the watcher effect above. */
       }
-      toast.success('Wallet connected')
+      toast.success(MESSAGES.wallet.connected)
     } catch {
-      toast.error('Freighter wallet not found. Install it at freighter.app')
+      toast.error(MESSAGES.wallet.extensionMissing)
     } finally {
       setConnecting(false)
     }
@@ -352,17 +353,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // Clear all cached query data so no previous account's data lingers
     // after disconnect — matches the account-switch behaviour above.
     queryClient.clear()
-    toast('Wallet disconnected')
+    toast(MESSAGES.wallet.disconnected)
   }, [queryClient])
 
   const signXDR = useCallback(
     async (xdr: string, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<string> => {
-      if (!address) throw new Error('Wallet not connected')
+      if (!address) throw new Error(MESSAGES.wallet.notConnected)
       if (networkMismatch) {
         throw new Error(
-          `Wallet network mismatch: Freighter is on ${passphraseLabel(
-            walletNetworkPassphrase || ''
-          )}, this app is configured for ${passphraseLabel(NETWORK_PASSPHRASE)}. Switch Freighter's network to continue.`
+          MESSAGES.network.mismatch(
+            passphraseLabel(walletNetworkPassphrase || ''),
+            passphraseLabel(NETWORK_PASSPHRASE)
+          )
         )
       }
 
@@ -370,14 +372,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const signal = options?.signal
 
       if (signal?.aborted) {
-        throw new Error('Signature request cancelled')
+        throw new Error(MESSAGES.wallet.signatureCancelled)
       }
 
       let timerId: ReturnType<typeof setTimeout> | undefined
 
       const timeoutPromise = new Promise<never>((_, reject) => {
         timerId = setTimeout(() => {
-          reject(new Error('Signature request timed out. You can try again.'))
+          reject(new Error(MESSAGES.wallet.signatureTimedOut))
         }, timeoutMs)
       })
       // Prevent unhandled rejection warning when race settles
@@ -385,7 +387,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       const abortPromise = signal
         ? new Promise<never>((_, reject) => {
-            const onAbort = () => reject(new Error('Signature request cancelled'))
+            const onAbort = () => reject(new Error(MESSAGES.wallet.signatureCancelled))
             if (signal.aborted) onAbort()
             else signal.addEventListener('abort', onAbort, { once: true })
           })
@@ -404,7 +406,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         const { signedTxXdr, error } = readSigned(rawRes)
 
         if (error || !signedTxXdr) {
-          throw new Error(error || 'Transaction signing was rejected')
+          throw new Error(error || MESSAGES.wallet.signingRejected)
         }
         return signedTxXdr
       } finally {
@@ -434,10 +436,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           role="alert"
           className="fixed top-0 inset-x-0 z-[100] bg-red-600 text-white text-sm font-medium px-4 py-2 text-center shadow-md"
         >
-          Wallet network mismatch: Freighter is set to{' '}
-          <strong>{walletNetwork || passphraseLabel(walletNetworkPassphrase || '')}</strong>,
-          this app expects <strong>{passphraseLabel(NETWORK_PASSPHRASE)}</strong>. Switch
-          Freighter&apos;s network — transactions are blocked until it matches.
+          {MESSAGES.network.mismatchBanner(
+            <strong>{walletNetwork || passphraseLabel(walletNetworkPassphrase || '')}</strong>,
+            <strong>{passphraseLabel(NETWORK_PASSPHRASE)}</strong>
+          )}
         </div>
       )}
       {!isVersionSupported && freighterVersion && (
@@ -445,7 +447,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           role="alert"
           className="fixed top-8 inset-x-0 z-[99] bg-amber-600 text-white text-sm font-medium px-4 py-2 text-center shadow-md"
         >
-          Outdated Freighter wallet detected ({freighterVersion}). Please update to version {MIN_FREIGHTER_VERSION} or newer.
+          {MESSAGES.wallet.outdatedBanner(freighterVersion, MIN_FREIGHTER_VERSION)}
         </div>
       )}
       {children}

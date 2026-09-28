@@ -14,6 +14,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { useDAOStats, useUserData, useLoanRequest, useAttachDocument } from '@/hooks/useDAO'
 import { parseToken, formatToken, computeMaxLoan } from '@/lib/utils'
+import { MESSAGES } from '@/lib/messages'
 import dynamic from 'next/dynamic'
 
 // Dynamic import to avoid SSR issues with IPFS
@@ -91,22 +92,22 @@ export default function RequestLoanPage() {
     e.preventDefault()
 
     if (!userData.isConnected || !userData.isMember) {
-      toast.error('You must be a DAO member to request loans')
+      toast.error(MESSAGES.validation.memberOnlyLoanRequest)
       return
     }
 
     if (!formData.amount || parseFloat(formData.amount) <= 0) {
-      toast.error('Please enter a valid loan amount')
+      toast.error(MESSAGES.validation.loanAmountInvalid)
       return
     }
 
-    if (maxLoan !== null && parseToken(formData.amount) > maxLoan) {
-      toast.error(`Amount exceeds the current maximum loan of ${maxLoanDisplay}`)
+    if (maxLoan !== null && maxLoanDisplay !== null && parseToken(formData.amount) > maxLoan) {
+      toast.error(MESSAGES.validation.loanAmountExceedsMax(maxLoanDisplay))
       return
     }
 
     if (userData.hasActiveLoan) {
-      toast.error('You already have an active loan')
+      toast.error(MESSAGES.validation.activeLoanExists)
       return
     }
 
@@ -121,14 +122,12 @@ export default function RequestLoanPage() {
         try {
           await attach('Loan', proposalId, formData.documentHash.trim())
         } catch {
-          toast.error(
-            'Your loan request was submitted, but attaching the document failed. You can retry from the loan page.'
-          )
+          toast.error(MESSAGES.toasts.loanDocumentAttachFailed)
         }
       }
 
       setSubmitted(true)
-      toast.success('Loan request submitted successfully!')
+      toast.success(MESSAGES.toasts.loanRequestSubmitted)
       setTimeout(() => router.push('/loans'), 2000)
     } catch {
       /* error handled by useWriteAction */
@@ -349,7 +348,7 @@ export default function RequestLoanPage() {
                   <ExclamationTriangleIcon className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 mr-2" />
                   <div className="text-sm text-red-800 dark:text-red-300">
                     <p className="font-medium">Active Loan Detected</p>
-                    <p>You already have an active loan. Please repay your current loan before requesting a new one.</p>
+                    <p>{MESSAGES.validation.activeLoanExistsExplain}</p>
                   </div>
                 </div>
               </div>
@@ -405,9 +404,9 @@ export default function RequestLoanPage() {
       <div className="flex min-h-[60vh] items-center justify-center">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
-            <CardTitle>Access Restricted</CardTitle>
+            <CardTitle>{MESSAGES.empty.gates.accessRestricted}</CardTitle>
             <CardDescription>
-              You must be a DAO member to request loans
+              {MESSAGES.validation.memberOnlyLoanRequest}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -472,9 +471,7 @@ export default function RequestLoanPage() {
             <CardContent className="p-4">
               <div className="flex items-center">
                 <CheckCircleIcon className="h-5 w-5 text-green-600 dark:text-green-400 mr-2" />
-                <span className="text-green-800 dark:text-green-300 font-medium">
-                  Loan request submitted successfully! Redirecting to loans page...
-                </span>
+                <span className="text-green-800 dark:text-green-300 font-medium">{MESSAGES.toasts.loanRequestSubmitted} Redirecting to loans page...</span>
               </div>
             </CardContent>
           </Card>

@@ -18,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { useDAOStats, useUserData, useRewards, useDAOEvents, eventLabel } from '@/hooks/useDAO'
 import { formatToken, formatDate } from '@/lib/utils'
+import { MESSAGES } from '@/lib/messages'
 import { formatStellarAddress } from '@/lib/stellar'
 import { MEMBER_STATUS_LABELS, NON_MEMBER_LABEL } from '@/constants'
 import toast from 'react-hot-toast'
@@ -46,7 +47,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (isSuccess) {
-      toast.success('Rewards claimed successfully!')
+      toast.success(MESSAGES.toasts.rewardsClaimed)
     }
   }, [isSuccess])
 
@@ -63,9 +64,9 @@ export default function DashboardPage() {
       <div className="flex min-h-[60vh] items-center justify-center">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
-            <CardTitle>Access Dashboard</CardTitle>
+            <CardTitle>{MESSAGES.empty.gates.accessDashboard}</CardTitle>
             <CardDescription>
-              Connect your wallet to access the member dashboard
+              {MESSAGES.empty.gates.dashboard}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

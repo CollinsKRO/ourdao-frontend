@@ -32,6 +32,7 @@ import {
 } from '@/hooks/useDAO'
 import { useNow } from '@/hooks/useNow'
 import { formatToken, formatDate, calculatePercentage, parseToken } from '@/lib/utils'
+import { MESSAGES } from '@/lib/messages'
 import { formatStellarAddress } from '@/lib/stellar'
 import { PROPOSAL_STATUS_LABELS, PROPOSAL_STATUS_AWAITING_FUNDS, IPFS_GATEWAY } from '@/constants'
 import toast from 'react-hot-toast'
@@ -64,7 +65,7 @@ export default function LoanDetailsPage() {
 
   useEffect(() => {
     if (!isLoading && !proposal) {
-      toast.error('Loan not found')
+      toast.error(MESSAGES.toasts.loanNotFound)
       router.push('/loans')
     }
   }, [isLoading, proposal, router])
@@ -113,20 +114,20 @@ export default function LoanDetailsPage() {
   const handleRepayment = async () => {
     const trimmed = repayAmount.trim()
     if (!trimmed) {
-      setRepayError('Enter an amount')
+      setRepayError(MESSAGES.validation.amountRequired)
       return
     }
     if (isNaN(Number(trimmed))) {
-      setRepayError('Enter a valid number')
+      setRepayError(MESSAGES.validation.amountInvalid)
       return
     }
     const parsed = parseToken(trimmed)
     if (parsed <= BigInt(0)) {
-      setRepayError('Amount must be greater than zero')
+      setRepayError(MESSAGES.validation.amountMustBePositive)
       return
     }
     if (parsed > outstanding) {
-      setRepayError(`Amount exceeds outstanding balance of ${formatToken(outstanding)}`)
+      setRepayError(MESSAGES.validation.amountExceedsOutstanding(formatToken(outstanding)))
       return
     }
     setRepayError(null)
@@ -581,7 +582,7 @@ export default function LoanDetailsPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <p className="text-sm text-muted-foreground">No document attached yet.</p>
+                    <p className="text-sm text-muted-foreground">{MESSAGES.empty.noDocument}</p>
                     {userData.isMember && (
                       <div className="flex gap-2">
                         <input

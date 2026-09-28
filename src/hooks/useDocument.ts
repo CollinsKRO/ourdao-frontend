@@ -13,11 +13,12 @@
 import { useCallback, useEffect, useMemo } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { canAccessDocument, downloadFromIPFS, type DocumentMetadata } from '@/lib/ipfs'
+import { MESSAGES } from '@/lib/messages'
 
-const ACCESS_DENIED_MESSAGE = 'You do not have permission to view this doc'
+const ACCESS_DENIED_MESSAGE = MESSAGES.documents.accessDenied
 
 function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : 'Failed to load doc'
+  return err instanceof Error ? err.message : MESSAGES.documents.loadFailed
 }
 
 export function useDocumentContent(

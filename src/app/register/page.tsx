@@ -14,6 +14,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { useDAOStats, useUserData, useMemberRegistration } from '@/hooks/useDAO'
 import { formatToken } from '@/lib/utils'
+import { MESSAGES } from '@/lib/messages'
 import toast from 'react-hot-toast'
 
 export default function RegisterPage() {
@@ -40,14 +41,14 @@ export default function RegisterPage() {
 
   useEffect(() => {
     if (isSuccess) {
-      toast.success('Registration successful! Welcome to the DAO!')
+      toast.success(MESSAGES.toasts.registrationSuccess)
       setTimeout(() => router.push('/dashboard'), 2000)
     }
   }, [isSuccess, router])
 
   useEffect(() => {
     if (error) {
-      toast.error('Registration failed. Please try again.')
+      toast.error(MESSAGES.toasts.registrationFailed)
     }
   }, [error])
 
@@ -59,12 +60,12 @@ export default function RegisterPage() {
     e.preventDefault()
     
     if (!userData.isConnected) {
-      toast.error('Please connect your wallet first')
+      toast.error(MESSAGES.wallet.pleaseConnectFirst)
       return
     }
 
     if (!formData.acceptTerms) {
-      toast.error('Please accept the terms and conditions')
+      toast.error(MESSAGES.validation.termsRequired)
       return
     }
 
@@ -206,9 +207,9 @@ export default function RegisterPage() {
       <div className="min-h-screen bg-gradient-to-br from-background to-blue-50 dark:from-background dark:to-blue-950/20 flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
-            <CardTitle>Connect Your Wallet</CardTitle>
+            <CardTitle>{MESSAGES.empty.connectHeading}</CardTitle>
             <CardDescription>
-              Connect your wallet to register for DAO membership
+              {MESSAGES.empty.gates.register}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

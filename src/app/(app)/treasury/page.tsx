@@ -29,6 +29,7 @@ import {
 } from '@/hooks/useDAO'
 import { asBigInt } from '@/lib/dao-mappers'
 import { formatToken, parseToken } from '@/lib/utils'
+import { MESSAGES } from '@/lib/messages'
 import { formatStellarAddress } from '@/lib/stellar'
 import { PROPOSAL_STATUS_LABELS, PROPOSAL_STATUS_AWAITING_FUNDS } from '@/constants'
 
@@ -161,10 +162,10 @@ export default function TreasuryPage() {
           <CardContent className="p-6 text-center">
             <Banknote className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
             <h3 className="mb-2 text-lg font-medium text-foreground">
-              Connect Your Wallet
+              {MESSAGES.empty.connectHeading}
             </h3>
             <p className="text-muted-foreground">
-              Please connect your wallet to access the treasury.
+              {MESSAGES.empty.gates.treasury}
             </p>
           </CardContent>
         </Card>
@@ -310,7 +311,7 @@ export default function TreasuryPage() {
             </div>
             {!userData.isMember && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
-                You must be a DAO member to stake.
+                {MESSAGES.empty.gates.staking}
               </p>
             )}
           </CardContent>
@@ -327,7 +328,7 @@ export default function TreasuryPage() {
           <CardContent>
             {hasErrors && (
               <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800 dark:border-yellow-900 dark:bg-yellow-950/30 dark:text-yellow-300">
-                Some treasury proposals couldn&apos;t be loaded and are missing from this list. Try again shortly.
+                {MESSAGES.empty.partialLoad('treasury proposals')}
               </div>
             )}
             {isLoading ? (
@@ -339,7 +340,7 @@ export default function TreasuryPage() {
             ) : proposals.length === 0 ? (
               <div className="py-10 text-center">
                 <Banknote className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-                <p className="text-muted-foreground">No treasury withdrawals yet.</p>
+                <p className="text-muted-foreground">{MESSAGES.empty.treasuryWithdrawals}</p>
               </div>
             ) : (
               <ul className="divide-y divide-border">

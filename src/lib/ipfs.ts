@@ -1,4 +1,5 @@
 import { IPFS_GATEWAY, IPFS_GATEWAYS, IPFS_GATEWAY_TIMEOUT_MS } from '@/constants'
+import { MESSAGES, presentBackendError } from '@/lib/messages'
 
 // PBKDF2 iteration count per OWASP guidance (as of 2024).
 // Raised from 100,000 to provide protection against offline brute-force attacks
@@ -181,7 +182,9 @@ export async function uploadToIPFS(
 
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null
-    throw new Error(body?.error || `Document upload failed (${res.status})`)
+    // The route's `{ error }` body is backend-shaped — present it via the
+    // shared policy (docs/messages.md) instead of splicing strings here.
+    throw new Error(presentBackendError(body, MESSAGES.documents.uploadRejected(res.status)))
   }
 
   const { hash } = (await res.json()) as { hash: string }
@@ -204,12 +207,12 @@ async function fetchFromGateways(hash: string): Promise<Response> {
         signal: AbortSignal.timeout(IPFS_GATEWAY_TIMEOUT_MS),
       })
       if (res.ok) return res
-      lastError = new Error(`Failed to fetch document from IPFS gateway (${res.status})`)
+      lastError = new Error(MESSAGES.documents.gatewayFetchFailed(res.status))
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
     }
   }
-  throw lastError ?? new Error('No IPFS gateway configured')
+  throw lastError ?? new Error(MESSAGES.documents.noGateway)
 }
 
 // IPFS download with decryption, read straight from the public gateway — no

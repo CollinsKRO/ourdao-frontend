@@ -29,6 +29,7 @@ import {
 } from '@/hooks/useDAO'
 import { formatToken, formatThreshold } from '@/lib/utils'
 import { formatStellarAddress } from '@/lib/stellar'
+import { MESSAGES } from '@/lib/messages'
 import { PROPOSAL_STATUS_LABELS, PROPOSAL_STATUS_AWAITING_FUNDS } from '@/constants'
 
 function StatusBadge({ status }: { status: number }) {
@@ -244,10 +245,10 @@ export default function GovernancePage() {
           <CardContent className="p-6 text-center">
             <ScaleIcon className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
             <h3 className="mb-2 text-lg font-medium text-foreground">
-              Connect Your Wallet
+              {MESSAGES.empty.connectHeading}
             </h3>
             <p className="text-muted-foreground">
-              Please connect your wallet to access governance.
+              {MESSAGES.empty.gates.governance}
             </p>
           </CardContent>
         </Card>
@@ -322,13 +323,13 @@ export default function GovernancePage() {
             <CardContent>
               {loanErrors && (
                 <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800 dark:border-yellow-900 dark:bg-yellow-950/30 dark:text-yellow-300">
-                  Some loan proposals couldn&apos;t be loaded and are missing from this list. Try again shortly.
+                  {MESSAGES.empty.partialLoad('loan proposals')}
                 </div>
               )}
               {loadingLoans ? (
                 <LoadingRows />
               ) : loanProposals.length === 0 ? (
-                <EmptyState label="No loan proposals yet." />
+                <EmptyState label={MESSAGES.empty.loanProposals} />
               ) : (
                 <ul className="divide-y divide-border">
                   {loanProposals.map((p) => (
@@ -365,13 +366,13 @@ export default function GovernancePage() {
             <CardContent>
               {treasuryErrors && (
                 <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800 dark:border-yellow-900 dark:bg-yellow-950/30 dark:text-yellow-300">
-                  Some treasury proposals couldn&apos;t be loaded and are missing from this list. Try again shortly.
+                  {MESSAGES.empty.partialLoad('treasury proposals')}
                 </div>
               )}
               {loadingTreasury ? (
                 <LoadingRows />
               ) : treasuryProposals.length === 0 ? (
-                <EmptyState label="No treasury withdrawals yet." />
+                <EmptyState label={MESSAGES.empty.treasuryWithdrawals} />
               ) : (
                 <ul className="divide-y divide-border">
                   {treasuryProposals.map((p) => (

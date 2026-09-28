@@ -100,6 +100,7 @@ npm run build
 - **Respect the `useSyncExternalStore` contract if you touch `useNow.ts` or write a similar hook.** `getSnapshot` must return a stable value between real store changes. Returning a fresh value on every call (e.g. `Date.now()`) causes an infinite render loop. There's a regression test covering this; don't work around it.
 - **Contract call signatures live in `src/lib/dao-client.ts`.** If [`ourdao-contracts`](https://github.com/ourdao/ourdao-contracts) changes an entrypoint, that's the file to update. Note the contract commit in your PR description.
 - **Icons: `lucide-react` only.** This matches the shadcn/ui convention `src/components/ui/` is already built from. `@heroicons/react` is being migrated out file-by-file (tracked in #47) — don't add new imports from it, and if you touch a file that still uses it, swap it to the closest `lucide-react` equivalent as part of your change rather than leaving it mixed.
+- **User-facing copy lives in `src/lib/messages.ts`.** Toasts, field errors, empty states, and wallet gates come from that central catalogue rather than inline literals at the call site. The house style and the presentation policy for backend `{ error, correlationId }` payloads are documented in [docs/messages.md](./docs/messages.md), and `test/messages.test.ts` fails if a catalogue message is re-introduced as an inline string.
 
 ## What gets closed without review
 

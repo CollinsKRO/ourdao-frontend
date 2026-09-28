@@ -5,6 +5,7 @@ import { useCallback, useRef, useState } from 'react'
 import React from 'react'
 import toast from 'react-hot-toast'
 import { useWallet } from '@/lib/wallet'
+import { MESSAGES } from '@/lib/messages'
 import { getTransactionUrl } from '@/lib/stellar'
 import { daoWrite, InvokeError, type InvokeResult } from '@/lib/dao-client'
 
@@ -38,9 +39,9 @@ export function useWriteAction() {
       toastIdRef.current = null
     }
     setPending(false)
-    setError(new Error('Signature request cancelled'))
+    setError(new Error(MESSAGES.wallet.signatureCancelled))
     setRetryable(true)
-    toast.error('Signature request cancelled')
+    toast.error(MESSAGES.wallet.signatureCancelled)
   }, [])
 
   const run = useCallback(
@@ -50,15 +51,15 @@ export function useWriteAction() {
       invalidates: QueryKey[] = []
     ) => {
       if (!isConnected || !address) {
-        toast.error('Connect your wallet first')
-        throw new Error('Wallet not connected')
+        toast.error(MESSAGES.wallet.connectFirst)
+        throw new Error(MESSAGES.wallet.notConnected)
       }
       setPending(true)
       setSuccess(false)
       setError(null)
       setRetryable(false)
 
-      const toastId = toast.loading(`${label}…`)
+      const toastId = toast.loading(MESSAGES.writes.pending(label))
       toastIdRef.current = toastId
 
       const controller = new AbortController()
@@ -74,7 +75,7 @@ export function useWriteAction() {
           React.createElement(
             'span',
             null,
-            `${label} confirmed `,
+            MESSAGES.writes.confirmed(label),
             React.createElement(
               'a',
               {
@@ -83,7 +84,7 @@ export function useWriteAction() {
                 rel: 'noopener noreferrer',
                 className: 'underline',
               },
-              'View transaction'
+              MESSAGES.writes.viewTransaction
             )
           ),
           { id: toastId }
@@ -106,13 +107,13 @@ export function useWriteAction() {
         setRetryable(retryable)
 
         if (isTimeout) {
-          toast.error(`${label} timed out. Signature request took too long. You can try again.`, { id: toastId })
+          toast.error(MESSAGES.writes.timedOut(label), { id: toastId })
         } else if (isCancel) {
-          toast.error(`${label} signature cancelled.`, { id: toastId })
+          toast.error(MESSAGES.writes.cancelled(label), { id: toastId })
         } else if (retryable) {
-          toast.error(`${label} failed: ${e.message} You can try again.`, { id: toastId })
+          toast.error(MESSAGES.writes.failedRetryable(label, e.message), { id: toastId })
         } else {
-          toast.error(`${label} failed: ${e.message}`, { id: toastId })
+          toast.error(MESSAGES.writes.failed(label, e.message), { id: toastId })
         }
 
         throw e
@@ -131,7 +132,7 @@ export function useWriteAction() {
 export function useMemberRegistration() {
   const { run, isPending, isSuccess, error, address, cancelSignature } = useWriteAction()
   const registerMember = () =>
-    run('Registering membership', (w) => w.registerMember(), [
+    run(MESSAGES.writes.labels.register, (w) => w.registerMember(), [
       ['userData', address],
       ['daoStats'],
     ])
@@ -141,7 +142,7 @@ export function useMemberRegistration() {
 export function useLoanRequest() {
   const { run, isPending, isSuccess, error, cancelSignature } = useWriteAction()
   const requestLoan = (amount: bigint) =>
-    run('Requesting loan', (w) => w.requestLoan(amount), [['backendStats']]).then(
+    run(MESSAGES.writes.labels.requestLoan, (w) => w.requestLoan(amount), [['backendStats']]).then(
       (res) => Number(res.returnValue)
     )
   return { requestLoan, isPending, error, isSuccess, cancelSignature }
@@ -150,7 +151,7 @@ export function useLoanRequest() {
 export function useVoting() {
   const { run, isPending, isSuccess, error, address, cancelSignature } = useWriteAction()
   const voteOnProposal = (proposalId: number, support: boolean) =>
-    run('Casting vote', (w) => w.voteOnLoanProposal(proposalId, support), [
+    run(MESSAGES.writes.labels.vote, (w) => w.voteOnLoanProposal(proposalId, support), [
       ['loanProposal', proposalId],
       ['loanProposals'],
       ['hasVoted', 'Loan', proposalId, address],
@@ -163,22 +164,22 @@ export function useLoanRepayment() {
   const { run, isPending, isSuccess, error, address, cancelSignature } = useWriteAction()
   const repayLoan = (loanId: number, amount?: bigint) => {
     if (amount !== undefined) {
-      if (amount <= BigInt(0)) throw new Error('Repayment amount must be greater than zero')
-      return run('Repaying loan', (w) => w.repayLoanPartial(loanId, amount), [
+      if (amount <= BigInt(0)) throw new Error(MESSAGES.validation.repaymentMustBePositive)
+      return run(MESSAGES.writes.labels.repay, (w) => w.repayLoanPartial(loanId, amount), [
         ['loan', loanId],
         ['userData', address],
         ['daoStats'],
       ])
     }
-    return run('Repaying loan', (w) => w.repayLoan(loanId), [
+    return run(MESSAGES.writes.labels.repay, (w) => w.repayLoan(loanId), [
       ['loan', loanId],
       ['userData', address],
       ['daoStats'],
     ])
   }
   const repayLoanPartial = (loanId: number, amount: bigint) => {
-    if (amount <= BigInt(0)) throw new Error('Repayment amount must be greater than zero')
-    return run('Repaying loan', (w) => w.repayLoanPartial(loanId, amount), [
+    if (amount <= BigInt(0)) throw new Error(MESSAGES.validation.repaymentMustBePositive)
+    return run(MESSAGES.writes.labels.repay, (w) => w.repayLoanPartial(loanId, amount), [
       ['loan', loanId],
       ['userData', address],
       ['daoStats'],
@@ -190,32 +191,32 @@ export function useLoanRepayment() {
 export function useMarkLoanDefaulted() {
   const { run, isPending, isSuccess, error, cancelSignature } = useWriteAction()
   const markLoanDefaulted = (loanId: number) =>
-    run('Marking loan defaulted', (w) => w.markLoanDefaulted(loanId), [['loan', loanId]])
+    run(MESSAGES.writes.labels.markDefaulted, (w) => w.markLoanDefaulted(loanId), [['loan', loanId]])
   return { markLoanDefaulted, isPending, error, isSuccess, cancelSignature }
 }
 
 export function useRewards() {
   const { run, isPending, isSuccess, error, address, cancelSignature } = useWriteAction()
   const claimRewards = () =>
-    run('Claiming rewards', (w) => w.claimRewards(), [['userData', address]])
+    run(MESSAGES.writes.labels.claimRewards, (w) => w.claimRewards(), [['userData', address]])
   const claimYield = () =>
-    run('Claiming yield', (w) => w.claimRewards(), [['userData', address]])
+    run(MESSAGES.writes.labels.claimYield, (w) => w.claimRewards(), [['userData', address]])
   return { claimRewards, claimYield, isPending, error, isSuccess, cancelSignature }
 }
 
 export function useStaking() {
   const { run, isPending, isSuccess, error, address, cancelSignature } = useWriteAction()
   const stake = (amount: bigint) =>
-    run('Staking', (w) => w.stake(amount), [['stake', address], ['daoStats']])
+    run(MESSAGES.writes.labels.stake, (w) => w.stake(amount), [['stake', address], ['daoStats']])
   const unstake = (amount: bigint) =>
-    run('Unstaking', (w) => w.unstake(amount), [['stake', address], ['daoStats']])
+    run(MESSAGES.writes.labels.unstake, (w) => w.unstake(amount), [['stake', address], ['daoStats']])
   return { stake, unstake, isPending, isSuccess, error, cancelSignature }
 }
 
 export function useTreasuryVoting() {
   const { run, isPending, isSuccess, error, address, cancelSignature } = useWriteAction()
   const voteOnTreasury = (proposalId: number, support: boolean) =>
-    run('Casting vote', (w) => w.voteOnTreasuryProposal(proposalId, support), [
+    run(MESSAGES.writes.labels.vote, (w) => w.voteOnTreasuryProposal(proposalId, support), [
       ['treasuryProposals'],
       ['hasVoted', 'Treasury', proposalId, address],
       ['daoStats'],
@@ -232,7 +233,7 @@ export function useProposeTreasury() {
     isPrivate: boolean
   ) =>
     run(
-      'Proposing withdrawal',
+      MESSAGES.writes.labels.proposeWithdrawal,
       (w) => w.proposeTreasuryWithdrawal(amount, destination, reason, isPrivate),
       [['backendStats']]
     )
@@ -243,7 +244,7 @@ export function useAttachDocument() {
   const { run, isPending, isSuccess, error, cancelSignature } = useWriteAction()
   const attach = (kind: 'Loan' | 'Treasury', proposalId: number, cid: string) =>
     run(
-      'Attaching document',
+      MESSAGES.writes.labels.attachDocument,
       (w) => w.attachDocument(kind, proposalId, new TextEncoder().encode(cid.trim())),
       [['document', kind, proposalId]]
     )
@@ -252,13 +253,13 @@ export function useAttachDocument() {
 
 export function useAdminActions() {
   const { run, isPending, isSuccess, error, cancelSignature } = useWriteAction()
-  const pause = () => run('Pausing the DAO', (w) => w.pause(), [['daoStats']])
-  const unpause = () => run('Unpausing the DAO', (w) => w.unpause(), [['daoStats']])
-  const addAdmin = (admin: string) => run('Adding admin', (w) => w.addAdmin(admin), [['admins']])
+  const pause = () => run(MESSAGES.writes.labels.pause, (w) => w.pause(), [['daoStats']])
+  const unpause = () => run(MESSAGES.writes.labels.unpause, (w) => w.unpause(), [['daoStats']])
+  const addAdmin = (admin: string) => run(MESSAGES.writes.labels.addAdmin, (w) => w.addAdmin(admin), [['admins']])
   const removeAdmin = (admin: string) =>
-    run('Removing admin', (w) => w.removeAdmin(admin), [['admins']])
+    run(MESSAGES.writes.labels.removeAdmin, (w) => w.removeAdmin(admin), [['admins']])
   const setThreshold = (thresholdBps: number) =>
-    run('Updating consensus threshold', (w) => w.setConsensusThreshold(thresholdBps), [
+    run(MESSAGES.writes.labels.setThreshold, (w) => w.setConsensusThreshold(thresholdBps), [
       ['daoStats'],
     ])
   return { pause, unpause, addAdmin, removeAdmin, setThreshold, isPending, isSuccess, error, cancelSignature }

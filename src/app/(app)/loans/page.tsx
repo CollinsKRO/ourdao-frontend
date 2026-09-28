@@ -26,6 +26,7 @@ import {
 import { useNow } from '@/hooks/useNow'
 import { formatToken, formatDate, calculatePercentage } from '@/lib/utils'
 import { formatStellarAddress } from '@/lib/stellar'
+import { MESSAGES } from '@/lib/messages'
 import { PROPOSAL_STATUS_LABELS } from '@/constants'
 import { PageHeader } from '@/components/PageHeader'
 import type { UserData } from '@/types/dao'
@@ -436,7 +437,7 @@ export default function LoansPage() {
         <div className="space-y-6">
           {hasErrors && (
             <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800 dark:border-yellow-900 dark:bg-yellow-950/30 dark:text-yellow-300">
-              Some proposals couldn&apos;t be loaded and are missing from this list. Try again shortly.
+              {MESSAGES.empty.partialLoad('proposals')}
             </div>
           )}
           {isLoading ? (

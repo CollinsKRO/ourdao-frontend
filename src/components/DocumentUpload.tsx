@@ -9,6 +9,7 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import { uploadMultipleDocuments, DocumentMetadata } from '@/lib/ipfs'
+import { MESSAGES } from '@/lib/messages'
 import { formatFileSize } from '@/lib/utils'
 
 interface DocumentUploadProps {
@@ -72,7 +73,10 @@ export default function DocumentUpload({
     const oversizedFiles = selectedFiles.filter(file => file.size > maxSize * 1024 * 1024)
     if (oversizedFiles.length > 0) {
       onError?.(
-        `Some files exceed the ${maxSize}MB limit: ${oversizedFiles.map(f => f.name).join(', ')}`
+        MESSAGES.documents.filesTooLarge(
+          maxSize,
+          oversizedFiles.map(f => f.name).join(', ')
+        )
       )
       return
     }
@@ -90,12 +94,12 @@ export default function DocumentUpload({
 
   const handleUpload = async () => {
     if (files.length === 0) {
-      onError?.('Please select files to upload')
+      onError?.(MESSAGES.documents.selectFiles)
       return
     }
     
     if (encrypt && !password.trim()) {
-      onError?.('Password is required for encrypted uploads')
+      onError?.(MESSAGES.documents.passwordRequired)
       return
     }
 
@@ -120,7 +124,7 @@ export default function DocumentUpload({
       setPassword('')
       setUploadProgress(0)
     } catch (error) {
-      onError?.(error instanceof Error ? error.message : 'Upload failed')
+      onError?.(error instanceof Error ? error.message : MESSAGES.documents.uploadFailed)
     } finally {
       setUploading(false)
     }

@@ -15,6 +15,7 @@ import {
 import { DocumentMetadata, getIPFSUrl, canAccessDocument } from '@/lib/ipfs'
 import { useDocumentContent } from '@/hooks/useDocument'
 import { formatFileSize } from '@/lib/utils'
+import { MESSAGES } from '@/lib/messages'
 
 interface DocumentViewerProps {
   doc: DocumentMetadata
@@ -50,7 +51,7 @@ export default function DocumentViewer({
 
   const handleDecrypt = () => {
     if (!password.trim()) {
-      setPasswordError('Password is required to decrypt this doc')
+      setPasswordError(MESSAGES.documents.decryptPasswordRequired)
       return
     }
     setPasswordError('')
@@ -196,7 +197,7 @@ export default function DocumentViewer({
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-foreground flex items-center">
             <ExclamationTriangleIcon className="h-5 w-5 text-red-500 mr-2" />
-            Access Denied
+            {MESSAGES.empty.gates.accessDenied}
           </h3>
           {onClose && (
             <button

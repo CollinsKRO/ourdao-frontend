@@ -21,6 +21,7 @@ import {
 import { useUserData, useProposeTreasury } from '@/hooks/useDAO'
 import { parseToken } from '@/lib/utils'
 import { isStellarAddress } from '@/lib/stellar'
+import { MESSAGES } from '@/lib/messages'
 import toast from 'react-hot-toast'
 
 export default function CreateProposalPage() {
@@ -45,10 +46,10 @@ export default function CreateProposalPage() {
           <CardContent className="p-6 text-center">
             <ExclamationTriangleIcon className="mx-auto mb-4 h-12 w-12 text-amber-500 dark:text-amber-400" />
             <h3 className="mb-2 text-lg font-medium text-foreground">
-              Member Only
+              {MESSAGES.empty.gates.memberOnlyTitle}
             </h3>
             <p className="text-muted-foreground">
-              Only DAO members can create governance proposals.
+              {MESSAGES.empty.gates.memberOnlyBody}
             </p>
           </CardContent>
         </Card>
@@ -63,21 +64,21 @@ export default function CreateProposalPage() {
     // proposal is currently unvotable by anyone (see /privacy). Guard even if
     // the checkbox is bypassed via devtools.
     if (form.isPrivate) {
-      toast.error('Private voting is disabled until commit/reveal voting is implemented. See /privacy.')
+      toast.error(MESSAGES.validation.privateVotingDisabled)
       return
     }
 
     const amount = parseToken(form.amount)
     if (amount <= BigInt(0)) {
-      toast.error('Enter a valid amount greater than zero')
+      toast.error(MESSAGES.validation.amountGreaterThanZero)
       return
     }
     if (!isStellarAddress(form.destination.trim())) {
-      toast.error('Enter a valid Stellar destination address (G… or C…)')
+      toast.error(MESSAGES.validation.stellarAddress)
       return
     }
     if (!form.reason.trim()) {
-      toast.error('A reason is required')
+      toast.error(MESSAGES.validation.reasonRequired)
       return
     }
 
