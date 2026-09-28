@@ -44,6 +44,32 @@ jobs:
       - run: npm run typecheck
 
   test:
+    # Node 20 is the required check and keeps the plain `test` name the
+    # ruleset and the `status` job expect; 22 and 24 are informational.
+    name: ${{ matrix.node == 20 && 'test' || format('test (node {0}, informational)', matrix.node) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: ${{ matrix.node != 20 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  # Issue #240: coverage is measured per file with the V8 provider and a
+  # ratchet threshold (see vitest.config.mts). The provider is pinned to the
+  # vitest version and installed with --no-save so `npm ci` stays
+  # lockfile-clean. The summary is published to the job output so the
+  # per-file report is the main deliverable without opening the artifact.
+  coverage:
+    name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -53,11 +79,63 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Install V8 coverage provider (pinned to vitest version)
+        run: npm install --no-save @vitest/coverage-v8@4.1.11
+      - name: Run coverage (enforces thresholds in vitest.config.mts)
+        run: npm run coverage
+      - name: Publish coverage summary to job output
+        if: always()
+        run: |
+          echo "## Coverage summary" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f coverage/coverage-summary.json ]; then
+            node -e "const s=require('./coverage/coverage-summary.json'); const t=s.total; console.log('Lines: '+t.lines.pct+'% ('+t.lines.covered+'/'+t.lines.total+') | Functions: '+t.functions.pct+'% | Branches: '+t.branches.pct+'% | Statements: '+t.statements.pct+'%')" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "<details><summary>Per-file coverage (coverage/coverage-summary.json)</summary>" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat coverage/coverage-summary.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "coverage/coverage-summary.json not found" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
 
   build:
+    # Node 20 is the required check and keeps the plain `build` name the
+    # ruleset and the `status` job expect; 22 and 24 are informational.
+    name: ${{ matrix.node == 20 && 'build' || format('build (node {0}, informational)', matrix.node) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    continue-on-error: ${{ matrix.node != 20 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+  # Screenshot baselines for the main routes in both themes × two viewports
+  # (#270). An unreviewed visual change fails this job and, through `status`,
+  # the PR — updating a baseline is a deliberate, reviewed act. Failed runs
+  # upload the actual/expected/diff PNGs as the `visual-diffs` artifact.
+  # Policy and baseline-update instructions: docs/visual-tests.md
+  visual:
+    name: Visual regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -65,7 +143,15 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:visual
+      - name: Upload diffs and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: visual-diffs
+          path: test-results/
+          retention-days: 7
 
   # Separate from lint/typecheck/test/build on purpose: a new advisory landing
   # in the tree affects every open PR at once, regardless of what that PR
@@ -96,14 +182,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
       - run: npm ci
       - run: npm run depcheck
 
+  # Knip detects unused *code* (exports, types, files, dependencies) — depcheck
+  # above only detects unused *packages*. Diffed against the committed baseline
+  # so pre-existing findings stay tracked as follow-ups (see
+  # docs/unused-exports.md) while any NEW finding fails the build. Kept out of
+  # `status`'s needs like depcheck/audit: an unused export landing in one file
+  # isn't something every open PR should turn red for.
+  knip:
+    name: Unused exports
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run knip:check
+      - name: Fail on a stale baseline
+        run: npm run knip:baseline -- --check
+
+  # Deliberately commented out: this is a design note for #143, not a disabled
+  # job. It becomes a real job once the interface artifact can be regenerated
+  # in CI.
+  #
   # TODO #143: Contract ABI drift detection is missing. Once the interface
   # artifact from P2-012a exists, nothing in CI verifies it against the
   # contract. All jobs (lint, typecheck, test, build) pass against a stale
@@ -159,7 +270,11 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # ANALYZE_BUNDLE=1 turns on productionBrowserSourceMaps (next.config.ts) so
+      # the composition report can attribute shipped bytes to packages (#266).
       - run: npm run build
+        env:
+          ANALYZE_BUNDLE: "1"
       - run: node scripts/bundle-size.mjs measure
       - name: Restore baseline from main
         if: github.ref != 'refs/heads/main'
@@ -169,17 +284,66 @@ jobs:
           key: bundle-size-baseline-unused
           restore-keys: |
             bundle-size-baseline-
+      - name: Restore composition baseline from main
+        if: github.ref != 'refs/heads/main'
+        uses: actions/cache/restore@v6
+        with:
+          path: bundle-composition-baseline.json
+          key: bundle-composition-baseline-unused
+          restore-keys: |
+            bundle-composition-baseline-
       - name: Compare against baseline and write summary
         run: node scripts/bundle-size.mjs report
       - name: Save baseline for main
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: cp bundle-size-current.json bundle-size-baseline.json
+        run: |
+          cp bundle-size-current.json bundle-size-baseline.json
+          cp bundle-composition-current.json bundle-composition-baseline.json
       - name: Cache baseline for main
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: actions/cache/save@v6
         with:
           path: bundle-size-baseline.json
           key: bundle-size-baseline-${{ github.sha }}
+      - name: Cache composition baseline for main
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache/save@v6
+        with:
+          path: bundle-composition-baseline.json
+          key: bundle-composition-baseline-${{ github.sha }}
+      # Uploaded on every run so a reviewer can diff composition without
+      # rebuilding locally -- the point of #266 is attributing a regression
+      # without a local reproduction.
+      - name: Upload composition report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bundle-composition
+          path: bundle-composition-current.json
+          if-no-files-found: ignore
+
+  # Runs on every PR (same cadence as bundle-size, not scheduled) because
+  # this is a small app where a regression is easy to introduce in any given
+  # PR and cheap to catch immediately — waiting for a nightly/scheduled run
+  # would let a Core Web Vitals regression sit on main for up to a day
+  # before anyone noticed. See lighthouserc.js for the budgets and an
+  # explicit note that they're placeholders pending the first real run.
+  lighthouse-ci:
+    name: Lighthouse CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Run Lighthouse CI against the production build
+        run: npm run lhci
+        env:
+          LHCI_BUILD_CONTEXT__CURRENT_HASH: ${{ github.sha }}
 
   # Records each job's outcome as an artifact so the privileged ci-status-comment.yml
   # workflow (triggered via workflow_run, never a fork's copy of it) can post a PR
@@ -187,7 +351,7 @@ jobs:
   status:
     name: Record status
     if: always()
-    needs: [lint, typecheck, test, build]
+    needs: [lint, typecheck, test, coverage, build, visual]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -201,7 +365,9 @@ jobs:
               "lint": "${{ needs.lint.result }}",
               "typecheck": "${{ needs.typecheck.result }}",
               "test": "${{ needs.test.result }}",
-              "build": "${{ needs.build.result }}"
+              "coverage": "${{ needs.coverage.result }}",
+              "build": "${{ needs.build.result }}",
+              "visual": "${{ needs.visual.result }}"
             }
           }
           EOF

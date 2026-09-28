@@ -8,20 +8,35 @@ import { daoRead } from '@/lib/dao-client'
 import { backend } from '@/lib/backend'
 import { asBigInt, mapLoanProposal, mapLoan, mapTreasuryProposal, toAdminLogEntry, type UILoan } from '@/lib/dao-mappers'
 import { fetchProposalPage } from './enumeration'
+import { queryKeys } from '@/lib/query-keys'
+import { QUERY_REFRESH_INTERVAL_MS } from '@/constants'
+
+function isBackendConfigured(): boolean {
+  if (backend && typeof (backend as { isConfigured?: () => boolean }).isConfigured === 'function') {
+    return (backend as { isConfigured: () => boolean }).isConfigured()
+  }
+  if (process.env.NEXT_PUBLIC_BACKEND_URL === '') return false
+  if (process.env.NEXT_PUBLIC_BACKEND_URL) return true
+  return process.env.NODE_ENV === 'test' && !!backend
+}
 
 /** All loan proposals (newest first), read live from the contract, paginated. */
 export function useLoanProposals() {
-  const { data: stats } = useQuery({
-    queryKey: ['backendStats'],
+  const backendConfigured = isBackendConfigured()
+  const { data: stats, isError: countError, refetch: refetchCount } = useQuery({
+    queryKey: queryKeys.backendStats(),
+    enabled: backendConfigured,
     queryFn: () => backend.getStats(),
-    refetchInterval: 15_000,
+    refetchInterval: backendConfigured ? QUERY_REFRESH_INTERVAL_MS : false,
     refetchIntervalInBackground: false,
   })
   const count = stats?.totalLoanProposals ?? 0
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+  const { data, isLoading, isError: listError, refetch: refetchList, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery({
-      queryKey: ['loanProposals', count],
+      queryKey: queryKeys.loanProposals(count),
+      // The page's primary data: a failed read goes to the error boundary.
+      meta: { boundary: true },
       enabled: isContractConfigured() && count > 0,
       initialPageParam: 0,
       queryFn: ({ pageParam }) =>
@@ -42,6 +57,12 @@ export function useLoanProposals() {
     loadMore: fetchNextPage,
     isLoadingMore: isFetchingNextPage,
     hasErrors,
+    /** The proposal count (indexer) or the list read failed, so an empty list is not real. */
+    isError: countError || listError,
+    refetch: () => {
+      if (countError) void refetchCount()
+      void refetchList()
+    },
   }
 }
 
@@ -51,7 +72,7 @@ export function useLoanProposals() {
 export function useHasVoted(kind: 'Loan' | 'Treasury', proposalId: number, enabled = true) {
   const { address } = useWallet()
   const { data, refetch } = useQuery({
-    queryKey: ['hasVoted', kind, proposalId, address],
+    queryKey: address ? queryKeys.hasVoted(kind, proposalId, address) : queryKeys.hasVotedDisabled(kind, proposalId),
     enabled:
       enabled &&
       isContractConfigured() &&
@@ -67,7 +88,10 @@ export function useHasVoted(kind: 'Loan' | 'Treasury', proposalId: number, enabl
  *  hasVoted state. */
 export function useLoanProposal(id: number) {
   const { data, isLoading, refetch: refetchProposal } = useQuery({
-    queryKey: ['loanProposal', id],
+    queryKey: queryKeys.loanProposal(id),
+    // The subject of the loan detail page: a failed read must not fall
+    // through to "proposal not found".
+    meta: { boundary: true },
     enabled: isContractConfigured() && Number.isFinite(id) && id >= 0,
     queryFn: () => daoRead.getLoanProposal(id),
   })
@@ -92,13 +116,13 @@ export function useLoanProposal(id: number) {
  *  originating proposal share the same id. */
 export function useLoan(id: number, enabled: boolean) {
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['loan', id],
+    queryKey: queryKeys.loan(id),
     enabled: isContractConfigured() && enabled && Number.isFinite(id) && id >= 0,
     queryFn: async (): Promise<UILoan | null> => {
       const raw = await daoRead.getLoan(id)
       return raw ? mapLoan(raw) : null
     },
-    refetchInterval: 15_000,
+    refetchInterval: QUERY_REFRESH_INTERVAL_MS,
     refetchIntervalInBackground: false,
   })
   return { loan: data ?? null, isLoading, refetch }
@@ -106,17 +130,21 @@ export function useLoan(id: number, enabled: boolean) {
 
 /** All treasury withdrawal proposals (newest first), read live from the contract, paginated. */
 export function useTreasuryProposals() {
-  const { data: stats } = useQuery({
-    queryKey: ['backendStats'],
+  const backendConfigured = isBackendConfigured()
+  const { data: stats, isError: countError, refetch: refetchCount } = useQuery({
+    queryKey: queryKeys.backendStats(),
+    enabled: backendConfigured,
     queryFn: () => backend.getStats(),
-    refetchInterval: 15_000,
+    refetchInterval: backendConfigured ? QUERY_REFRESH_INTERVAL_MS : false,
     refetchIntervalInBackground: false,
   })
   const count = stats?.totalTreasuryProposals ?? 0
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+  const { data, isLoading, isError: listError, refetch: refetchList, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery({
-      queryKey: ['treasuryProposals', count],
+      queryKey: queryKeys.treasuryProposals(count),
+      // The page's primary data: a failed read goes to the error boundary.
+      meta: { boundary: true },
       enabled: isContractConfigured() && count > 0,
       initialPageParam: 0,
       queryFn: ({ pageParam }) =>
@@ -135,6 +163,11 @@ export function useTreasuryProposals() {
     loadMore: fetchNextPage,
     isLoadingMore: isFetchingNextPage,
     hasErrors,
+    isError: countError || listError,
+    refetch: () => {
+      if (countError) void refetchCount()
+      void refetchList()
+    },
   }
 }
 
@@ -142,10 +175,10 @@ export function useTreasuryProposals() {
 export function useStake(): bigint {
   const { address } = useWallet()
   const { data } = useQuery({
-    queryKey: ['stake', address],
+    queryKey: address ? queryKeys.stake(address) : queryKeys.stakeDisabled(),
     enabled: !!address && isContractConfigured(),
     queryFn: () => daoRead.getStake(address!),
-    refetchInterval: 15_000,
+    refetchInterval: QUERY_REFRESH_INTERVAL_MS,
     refetchIntervalInBackground: false,
   })
   return asBigInt(data)
@@ -161,7 +194,7 @@ export function useStake(): bigint {
 
 export function useProposalDocument(kind: 'Loan' | 'Treasury', id: number) {
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['document', kind, id],
+    queryKey: queryKeys.proposalDocument(kind, id),
     enabled: isContractConfigured() && Number.isFinite(id) && id >= 0,
     queryFn: async () => {
       const bytes = await daoRead.getDocument(kind, id)
@@ -173,24 +206,26 @@ export function useProposalDocument(kind: 'Loan' | 'Treasury', id: number) {
 
 /** The current admin set, read live from the contract. */
 export function useAdmins() {
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['admins'],
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: queryKeys.admins(),
     enabled: isContractConfigured(),
     queryFn: () => daoRead.getAdmins(),
   })
-  return { admins: data ?? [], isLoading, refetch }
+  return { admins: data ?? [], isLoading, isError, refetch }
 }
 
 /** The admin/governance event history (init, admin add/remove, threshold,
  *  policy, pause/unpause), indexed off-chain since the contract keeps no
  *  queryable log of its own admin actions. */
 export function useAdminLog(limit = 50) {
-  const { data, isLoading } = useQuery({
-    queryKey: ['adminLog', limit],
+  const backendConfigured = isBackendConfigured()
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: queryKeys.adminLog(limit),
+    enabled: backendConfigured,
     queryFn: () => backend.getAdminLog(limit),
-    refetchInterval: 15_000,
+    refetchInterval: backendConfigured ? QUERY_REFRESH_INTERVAL_MS : false,
     refetchIntervalInBackground: false,
   })
   const entries = useMemo(() => (data ?? []).map(toAdminLogEntry), [data])
-  return { entries, isLoading }
+  return { entries, isLoading, isError, refetch }
 }

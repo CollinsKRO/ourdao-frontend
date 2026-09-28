@@ -20,7 +20,8 @@ import {
 } from '@heroicons/react/24/outline'
 import { useUserData, useProposeTreasury } from '@/hooks/useDAO'
 import { parseToken } from '@/lib/utils'
-import { isStellarAddress } from '@/lib/stellar'
+import { compactErrors, positiveTokenAmount, required, stellarAddress, type FieldError } from '@/lib/form-validation'
+import { FormErrorSummary } from '@/components/FormErrorSummary'
 import toast from 'react-hot-toast'
 
 export default function CreateProposalPage() {
@@ -34,6 +35,7 @@ export default function CreateProposalPage() {
     reason: '',
     isPrivate: false,
   })
+  const [errors, setErrors] = useState<FieldError[]>([])
 
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
@@ -67,21 +69,19 @@ export default function CreateProposalPage() {
       return
     }
 
-    const amount = parseToken(form.amount)
-    if (amount <= BigInt(0)) {
-      toast.error('Enter a valid amount greater than zero')
-      return
-    }
-    if (!isStellarAddress(form.destination.trim())) {
-      toast.error('Enter a valid Stellar destination address (G… or C…)')
-      return
-    }
-    if (!form.reason.trim()) {
-      toast.error('A reason is required')
+    const nextErrors = compactErrors([
+      positiveTokenAmount(form.amount, 'proposal-amount', 'Amount'),
+      stellarAddress(form.destination, 'proposal-destination', 'Destination address'),
+      required(form.reason, 'proposal-reason', 'Reason'),
+    ])
+    setErrors(nextErrors)
+    if (nextErrors.length > 0) {
+      toast.error('Fix the highlighted form errors')
       return
     }
 
     try {
+      const amount = parseToken(form.amount)
       await propose(amount, form.destination.trim(), form.reason.trim(), false)
       router.push('/governance')
     } catch {
@@ -109,6 +109,7 @@ export default function CreateProposalPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
+              <FormErrorSummary errors={errors} />
               <div>
                 <label htmlFor="proposal-amount" className="mb-1 block text-sm font-medium text-foreground">
                   Amount

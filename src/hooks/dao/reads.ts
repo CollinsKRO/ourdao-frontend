@@ -1,13 +1,25 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useWallet } from '@/lib/wallet'
 import { CONTRACT_ID, isContractConfigured } from '@/lib/stellar'
 import { daoRead } from '@/lib/dao-client'
 import { backend } from '@/lib/backend'
 import type { UserData, DAOStats } from '@/types/dao'
-import { asBigInt, resolveLoanPolicy, toLoan, toMemberStatus } from '@/lib/dao-mappers'
-import type { UILoanPolicy } from '@/lib/dao-mappers'
+import { asBigInt, mapLoanTerms, resolveLoanPolicy, toLoan, toMemberStatus } from '@/lib/dao-mappers'
+import type { UILoanPolicy, UILoanTerms } from '@/lib/dao-mappers'
+import { queryKeys } from '@/lib/query-keys'
+import { QUERY_REFRESH_INTERVAL_MS } from '@/constants'
+
+function isBackendConfigured(): boolean {
+  if (backend && typeof (backend as { isConfigured?: () => boolean }).isConfigured === 'function') {
+    return (backend as { isConfigured: () => boolean }).isConfigured()
+  }
+  if (process.env.NEXT_PUBLIC_BACKEND_URL === '') return false
+  if (process.env.NEXT_PUBLIC_BACKEND_URL) return true
+  return process.env.NODE_ENV === 'test' && !!backend
+}
 
 export function useDAOContract() {
   return { contractId: CONTRACT_ID, configured: isContractConfigured() }
@@ -15,37 +27,53 @@ export function useDAOContract() {
 
 /** Aggregated data for the connected member. */
 export function useUserData(): UserData {
-  const { address, isConnected } = useWallet()
+  const { address, isConnected, isRestoring } = useWallet()
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['userData', address],
+  const { data, isLoading, isError, refetch: refetchUser } = useQuery({
+    queryKey: address ? queryKeys.userData(address) : queryKeys.userDataDisabled(),
     enabled: !!address && isContractConfigured(),
     queryFn: async () => {
-      const [isMember, isAdmin, member, pendingYield] = await Promise.all([
+      const [isMember, isAdmin, member, pendingYield, exitShare] = await Promise.all([
         daoRead.isMember(address!),
         daoRead.isAdmin(address!),
         daoRead.getMember(address!),
         daoRead.getPendingYield(address!),
+        daoRead.calculateExitShare ? daoRead.calculateExitShare(address!).catch(() => null) : Promise.resolve(null),
       ])
-      return { isMember, isAdmin, member, pendingYield }
+      return { isMember, isAdmin, member, pendingYield, exitShare }
     },
   })
 
+  const isMember = !!data?.isMember
+  const backendConfigured = isBackendConfigured()
+
   // Loan history comes from the off-chain indexer (the contract keeps no
-  // queryable per-member loan list). Independent of contract configuration so
-  // it still resolves when only the backend URL is set.
-  const { data: loans } = useQuery({
-    queryKey: ['userLoans', address],
-    enabled: !!address,
+  // queryable per-member loan list).
+  // Issue #242: Gated on backend configuration and membership:
+  // - If backend is unconfigured, do not poll.
+  // - A connected non-member does not poll for loan history (when contract is configured).
+  const { data: loans, isError: loansError, refetch: refetchLoans } = useQuery({
+    queryKey: address ? queryKeys.userLoans(address) : queryKeys.userLoansDisabled(),
+    enabled: !!address && backendConfigured && (!isContractConfigured() || isMember),
     queryFn: () => backend.getLoans(address!),
-    refetchInterval: 15_000,
+    refetchInterval: () => {
+      if (!backendConfigured || !isMember) return false
+      return QUERY_REFRESH_INTERVAL_MS
+    },
     refetchIntervalInBackground: false,
   })
 
   const m = data?.member
   return {
     isConnected,
-    isLoading,
+    // `isRestoring` is folded in on purpose (#307). Freighter's `isAllowed()`
+    // and `getAddress()` are async, so on a hard refresh the first render or
+    // two has `isConnected === false` for a wallet that is in fact connected.
+    // A guard reading only the query's `isLoading` sees a *disabled* query
+    // (isLoading false) with no data, concludes "not a member", and redirects a
+    // connected member to /register — or / — before the address ever arrives.
+    // Callers get one flag that means "membership is not knowable yet".
+    isLoading: isRestoring || isLoading,
     address: address || undefined,
     isMember: !!data?.isMember,
     isAdmin: !!data?.isAdmin,
@@ -55,7 +83,10 @@ export function useUserData(): UserData {
           status: toMemberStatus(m.status),
           joinDate: Number(m.join_ledger ?? 0),
           contributionAmount: asBigInt(m.contribution),
-          shareBalance: asBigInt(m.share_balance),
+          // Member.share_balance in ourdao-contracts is a dead field (only set at join/exit, never updated).
+          // Paired contract issue: https://github.com/Mikey-222/ourdao-contracts/issues/42
+          // We query daoRead.calculateExitShare(address) to compute the member's live treasury claim.
+          shareBalance: asBigInt(data?.exitShare ?? m.share_balance),
           hasActiveLoan: !!m.has_active_loan,
           lastLoanDate: Number(m.last_loan_time ?? 0),
         }
@@ -65,6 +96,12 @@ export function useUserData(): UserData {
     pendingYield: asBigInt(data?.pendingYield),
     hasActiveLoan: !!m?.has_active_loan,
     loans: (loans ?? []).map(toLoan),
+    isError,
+    loansError,
+    refetch: () => {
+      if (isError) void refetchUser()
+      if (loansError) void refetchLoans()
+    },
   }
 }
 
@@ -75,6 +112,17 @@ export type ExtendedStats = DAOStats & {
   /** Policy cap on a loan as basis points of the treasury balance. */
   maxLoanToTreasuryRatio: number
   consensusThreshold: number
+  indexerStale: boolean
+  /** A stats read failed, so the figures below are defaults, not the DAO's real numbers. */
+  isError: boolean
+  refetch: () => void
+  secondsSinceUpdate: number | null
+  interestCollected: string
+  principalLent: string
+  principalRepaid: string
+  valueDefaulted: string
+  defaultedLoans: number
+  totalDefaultedValue: string
   features: {
     ensVoting: boolean
     documentStorage: boolean
@@ -89,7 +137,7 @@ export type ExtendedStats = DAOStats & {
  *  read lands the labelled fallbacks stand in (`fromChain` is false). */
 export function useLoanPolicy(): UILoanPolicy {
   const { data } = useQuery({
-    queryKey: ['loanPolicy'],
+    queryKey: queryKeys.loanPolicy(),
     enabled: isContractConfigured(),
     queryFn: async () => {
       const [policy, threshold] = await Promise.all([
@@ -102,9 +150,48 @@ export function useLoanPolicy(): UILoanPolicy {
   return resolveLoanPolicy(data?.policy, data?.threshold)
 }
 
+/** Wait this long after the amount stops changing before pricing it, so
+ *  typing an amount doesn't fire a simulation per keystroke. */
+const LOAN_TERMS_DEBOUNCE_MS = 300
+
+/** The terms the contract would set for a loan of `amount` (stroops), read
+ *  from `calculate_loan_terms`. The rate depends on the amount relative to the
+ *  live treasury, so it can't be derived client-side. Pass null to skip. */
+export function useLoanTerms(amount: bigint | null): {
+  terms: UILoanTerms | null
+  isLoading: boolean
+  isError: boolean
+} {
+  const [debounced, setDebounced] = useState(amount)
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(amount), LOAN_TERMS_DEBOUNCE_MS)
+    return () => clearTimeout(id)
+  }, [amount])
+
+  // Terms for a previous amount must never be shown against the current one.
+  const settled = debounced === amount
+  const enabled = isContractConfigured() && debounced !== null && debounced > BigInt(0)
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: queryKeys.loanTerms(debounced ?? BigInt(0)),
+    enabled,
+    queryFn: async () => {
+      const raw = await daoRead.calculateLoanTerms(debounced!)
+      if (!raw) throw new Error('Loan terms are unavailable')
+      return mapLoanTerms(raw)
+    },
+  })
+
+  return {
+    terms: settled && enabled && data ? data : null,
+    isLoading: amount !== null && amount > BigInt(0) && (!settled || (enabled && isLoading)),
+    isError: settled && enabled && isError,
+  }
+}
+
 export function useDAOStats(): ExtendedStats {
-  const { data } = useQuery({
-    queryKey: ['daoStats'],
+  const { data, isError: contractError, refetch: refetchContract } = useQuery({
+    queryKey: queryKeys.daoStats(),
     enabled: isContractConfigured(),
     queryFn: async () => {
       const [totalMembers, activeMembers, threshold, treasury, policy, isPaused] =
@@ -122,10 +209,12 @@ export function useDAOStats(): ExtendedStats {
 
   // Loan counts and total stake are aggregated by the off-chain indexer, which
   // sees the full event history the contract doesn't keep queryable.
-  const { data: agg } = useQuery({
-    queryKey: ['daoStatsBackend'],
+  const backendConfigured = isBackendConfigured()
+  const { data: agg, isError: indexerError, refetch: refetchIndexer } = useQuery({
+    queryKey: queryKeys.daoStatsBackend(),
+    enabled: backendConfigured,
     queryFn: () => backend.getStats(),
-    refetchInterval: 15_000,
+    refetchInterval: backendConfigured ? QUERY_REFRESH_INTERVAL_MS : false,
     refetchIntervalInBackground: false,
   })
 
@@ -150,6 +239,19 @@ export function useDAOStats(): ExtendedStats {
     membershipFee,
     maxLoanToTreasuryRatio,
     consensusThreshold: Number(data?.threshold ?? 0),
+    indexerStale: agg?.indexerStale ?? false,
+    isError: contractError || indexerError,
+    refetch: () => {
+      if (contractError) void refetchContract()
+      if (indexerError) void refetchIndexer()
+    },
+    secondsSinceUpdate: agg?.secondsSinceUpdate ?? null,
+    interestCollected: agg?.interestCollected ?? '0',
+    principalLent: agg?.principalLent ?? '0',
+    principalRepaid: agg?.principalRepaid ?? '0',
+    valueDefaulted: agg?.valueDefaulted ?? '0',
+    defaultedLoans: agg?.defaultedLoans ?? 0,
+    totalDefaultedValue: agg?.totalDefaultedValue ?? '0',
     // The Soroban port's native modules are always compiled in.
     features: {
       ensVoting: true, // name registry
@@ -165,13 +267,15 @@ export function useDAOStats(): ExtendedStats {
 // getEvents) and served from its raw event feed. Kept read-only; `setEvents`
 // remains for call-site compatibility with the previous shell.
 export function useDAOEvents() {
-  const { data } = useQuery({
-    queryKey: ['daoEvents'],
+  const backendConfigured = isBackendConfigured()
+  const { data, isError, refetch } = useQuery({
+    queryKey: queryKeys.daoEvents(),
+    enabled: backendConfigured,
     queryFn: () => backend.getEvents(50),
-    refetchInterval: 15_000,
+    refetchInterval: backendConfigured ? QUERY_REFRESH_INTERVAL_MS : false,
     refetchIntervalInBackground: false,
   })
   const events = (data ?? []) as unknown as Record<string, unknown>[]
   const setEvents = () => {}
-  return { events, setEvents }
+  return { events, setEvents, isError, refetch }
 }

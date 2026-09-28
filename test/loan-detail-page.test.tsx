@@ -280,7 +280,7 @@ describe('LoanDetailsPage', () => {
       // first call returns initial loan, second call after refetch returns updated loan
       mockGetLoan
         .mockResolvedValueOnce(activeLoan())
-        .mockResolvedValueOnce(activeLoan({ amount_repaid: BigInt(50_0000000) }))
+        .mockResolvedValue(activeLoan({ amount_repaid: BigInt(50_0000000) }))
 
       renderWithProviders(<LoanDetailsPage />)
       await waitFor(() => expect(screen.getByLabelText(/Repayment amount/i)).toBeInTheDocument())

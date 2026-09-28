@@ -2,6 +2,8 @@ import '@testing-library/jest-dom/vitest'
 import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
 
+process.env.NEXT_PUBLIC_BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000'
+
 // `globals: false` in vitest.config.mts means RTL's own auto-cleanup (which
 // relies on detecting a global `afterEach`) never registers, so a page
 // rendered in one test stays in the DOM for the next `it()` in the same

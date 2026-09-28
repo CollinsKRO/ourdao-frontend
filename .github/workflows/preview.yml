@@ -1,0 +1,74 @@
+name: Preview Deployment
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: preview-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Deploy Preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for preview
+        run: npm run build
+        env:
+          # Testnet configuration - never use production secrets
+          NEXT_PUBLIC_STELLAR_NETWORK: testnet
+          NEXT_PUBLIC_STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+          NEXT_PUBLIC_STELLAR_PASSPHRASE: "Test SDF Network ; September 2015"
+          # Do NOT set PINATA_JWT or other production secrets here
+
+      - name: Create deployment
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: out
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+        with:
+          preview: true
+
+      - name: Add preview comment
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const deploymentUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const body = `## 🔍 Preview Deployment
+
+            A preview of this PR has been built with **testnet** configuration.
+
+            ⚠️ **This is not production** — no production secrets are used.
+
+            [View Preview Build](${deploymentUrl})
+
+            **Configuration:**
+            - Network: Testnet
+            - Secrets: None (testnet only)
+
+            > **Note:** If this PR requires a wallet (Freighter), please test locally as preview deployments may not have full wallet integration.`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

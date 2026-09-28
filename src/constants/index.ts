@@ -47,17 +47,16 @@ export const PROPOSAL_STATUS_LABELS = {
  *  keeps the proposal as `ApprovedPendingDisbursement` until it is funded. */
 export const PROPOSAL_STATUS_AWAITING_FUNDS = 7
 
-const DEFAULT_IPFS_GATEWAY = 'https://gateway.pinata.cloud/ipfs/'
-
 /** Parse a comma-separated gateway list, dropping blanks and adding a trailing
- *  slash so `${gateway}${cid}` is always well-formed. Falls back to the default. */
+ *  slash so `${gateway}${cid}` is always well-formed. No gateway is assumed:
+ *  deployments must configure the same provider they use for document reads. */
 export function parseGatewayList(raw: string | undefined): string[] {
   const list = (raw ?? '')
     .split(',')
     .map((g) => g.trim())
     .filter(Boolean)
     .map((g) => (g.endsWith('/') ? g : `${g}/`))
-  return list.length > 0 ? list : [DEFAULT_IPFS_GATEWAY]
+  return list
 }
 
 /** Read gateways in priority order; NEXT_PUBLIC_IPFS_GATEWAY may list several. */
@@ -68,3 +67,7 @@ export const IPFS_GATEWAY = IPFS_GATEWAYS[0]
 
 /** Give up on one gateway after this long and move on to the next. */
 export const IPFS_GATEWAY_TIMEOUT_MS = 10_000
+
+/** Query freshness and polling are intentionally aligned with one policy. */
+export const QUERY_STALE_TIME_MS = 60_000
+export const QUERY_REFRESH_INTERVAL_MS = 60_000

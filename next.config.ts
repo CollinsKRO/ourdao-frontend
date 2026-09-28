@@ -1,136 +1,96 @@
 import type { NextConfig } from "next";
+import { version } from "./package.json";
 
 /**
- * Build an env-driven Content-Security-Policy.
- *
- * - Soroban RPC, backend API, and IPFS gateway origins come from the same
- *   NEXT_PUBLIC_* variables the app reads at runtime (src/lib/stellar.ts,
- *   src/lib/backend.ts, src/constants/index.ts) so a deployment pointed at
- *   non-default endpoints doesn't silently break. Hard-coding defaults here
- *   would be the wrong fix — see issue context.
- * - Next.js hydration requires either a nonce or 'unsafe-inline' for
- *   script-src/style-src. A true nonce policy needs per-request generation
- *   in middleware and wiring the nonce into every inline script — not
- *   achievable with a static headers() alone. We use 'unsafe-inline' and
- *   document the tradeoff explicitly rather than adding it silently.
- *   If a nonce-based policy becomes achievable (e.g. via middleware), it
- *   should replace the unsafe-inline entries and add 'strict-dynamic'.
- * - Freighter extension: the extension injects `window.freighterApi` via
- *   the page's JS context and communicates over postMessage — it does not
- *   require extra connect-src or script-src allowances. Verified that
- *   wallet connect / sign / submit flows work under the enforced policy
- *   with a real Freighter connection (see PR notes). No `chrome-extension:`
- *   or `moz-extension:` scheme is added to CSP.
+ * Build image remote patterns from IPFS gateway configuration.
+ * 
+ * Note: CSP and other security headers are now generated in src/middleware.ts
+ * to support per-request nonce generation for script-src. The buildCsp function
+ * has been removed; see middleware.ts for the new nonce-based policy.
  */
-function buildCsp(): string {
-  const rpcUrl = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org";
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
-  // NEXT_PUBLIC_IPFS_GATEWAY may be a comma-separated list of gateways.
-  const ipfsGateways = (process.env.NEXT_PUBLIC_IPFS_GATEWAY || "https://gateway.pinata.cloud/ipfs/")
+
+function buildImageRemotePatterns() {
+  const ipfsGateways = (process.env.NEXT_PUBLIC_IPFS_GATEWAY || "")
     .split(",")
     .map((g) => g.trim())
     .filter(Boolean);
 
-  const origins = new Set<string>();
+  const patterns: {
+    protocol?: "http" | "https";
+    hostname: string;
+    port?: string;
+    pathname?: string;
+  }[] = [];
+  const seen = new Set<string>();
 
-  for (const raw of [rpcUrl, backendUrl, ...ipfsGateways]) {
+  for (const raw of ipfsGateways) {
     try {
       const u = new URL(raw);
-      origins.add(u.origin);
-      // If the gateway URL includes a path (e.g. /ipfs/), the origin alone
-      // covers it for CSP, but we also keep the gateway origin for connect-src.
+      const protocol = (u.protocol.replace(":", "") as "http" | "https") || "https";
+      const hostname = u.hostname;
+      const port = u.port || undefined;
+      let pathname = u.pathname;
+      if (!pathname || pathname === "/") {
+        pathname = "/**";
+      } else {
+        pathname = pathname.endsWith("/") ? `${pathname}**` : `${pathname}/**`;
+      }
+
+      const key = `${protocol}://${hostname}:${port ?? ""}${pathname}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        patterns.push({
+          protocol,
+          hostname,
+          ...(port ? { port } : {}),
+          pathname,
+        });
+      }
     } catch {
-      // Ignore malformed env values — don't break the build; the header will
-      // just not include that origin, which surfaces as a CSP violation rather
-      // than a deployment crash.
+      // Ignore malformed env values — don't break the build
     }
   }
 
-  // Allow ws/wss variants for local dev HMR and any WS-based RPC endpoint.
-  const wsOrigins = new Set<string>();
-  for (const o of origins) {
-    try {
-      const u = new URL(o);
-      if (u.protocol === "http:") wsOrigins.add(`ws://${u.host}`);
-      if (u.protocol === "https:") wsOrigins.add(`wss://${u.host}`);
-    } catch {
-      // ignore
-    }
-  }
-
-  const connectSrc = [
-    "'self'",
-    ...Array.from(origins),
-    ...Array.from(wsOrigins),
-    // Local dev server itself is always self, but explicitly allowing
-    // ws://localhost:* / wss://localhost:* covers HMR.
-    "ws://localhost:*",
-    "wss://localhost:*",
-  ].join(" ");
-
-  const directives = [
-    "default-src 'self'",
-    // Next.js requires 'unsafe-inline' for its hydration inline scripts.
-    // A nonce-based policy (via middleware) would be strictly better, but
-    // headers() alone cannot generate per-request nonces. Documented here
-    // so the tradeoff is visible — not silently added.
-    "script-src 'self' 'unsafe-inline'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https:",
-    "font-src 'self' data:",
-    `connect-src ${connectSrc}`,
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-    "worker-src 'self' blob:",
-    "media-src 'self' blob: data:",
-  ];
-
-  return directives.join("; ");
+  return patterns;
 }
+
+export { buildImageRemotePatterns };
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   turbopack: {},
-  async headers() {
-    const csp = buildCsp();
-    return [
-      {
-        source: "/(.*)",
-        headers: [
-          {
-            key: "Content-Security-Policy",
-            value: csp,
-          },
-          {
-            key: "Strict-Transport-Security",
-            value: "max-age=63072000; includeSubDomains; preload",
-          },
-          {
-            key: "X-Content-Type-Options",
-            value: "nosniff",
-          },
-          {
-            key: "Referrer-Policy",
-            value: "strict-origin-when-cross-origin",
-          },
-          {
-            key: "X-Frame-Options",
-            value: "DENY",
-          },
-          {
-            key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=(), interest-cohort=(), browsing-topics=()",
-          },
-          {
-            key: "Cross-Origin-Opener-Policy",
-            value: "same-origin",
-          },
-        ],
-      },
-    ];
+  // Emits `.map` files beside the client chunks in `.next/static`, which is
+  // what lets `scripts/bundle-size.mjs composition` attribute shipped bytes to
+  // the package that produced them (#266) — Turbopack's minified chunks name
+  // no modules, so without a map a size regression can be detected but not
+  // explained.
+  //
+  // Opt-in rather than always on: source maps for the whole client roughly
+  // double build output and add time, and only the bundle job needs them. The
+  // `bundle-size` npm script and the CI job set ANALYZE_BUNDLE=1.
+  productionBrowserSourceMaps: process.env.ANALYZE_BUNDLE === "1",
+  // Surfaced in the UI by src/lib/build-info.ts so a bug report can name the
+  // build and match it to a CHANGELOG.md entry (#250). The SHA comes from the
+  // deploy platform (Vercel) or CI (GitHub Actions); absent locally.
+  env: {
+    NEXT_PUBLIC_APP_VERSION: version,
+    NEXT_PUBLIC_GIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || "",
   },
+  // `page.dev.tsx` routes (the /dev/components catalogue, #253) exist only
+  // under `next dev`. `next build` sets NODE_ENV=production, so there the file
+  // is an ordinary non-route file nothing imports, and it never reaches the
+  // production bundle.
+  pageExtensions:
+    process.env.NODE_ENV === "production"
+      ? ["tsx", "ts", "jsx", "js"]
+      : ["dev.tsx", "tsx", "ts", "jsx", "js"],
+  images: {
+    formats: ["image/avif", "image/webp"],
+    remotePatterns: buildImageRemotePatterns(),
+  },
+  // Security headers (including CSP) are now set in src/middleware.ts to
+  // support per-request nonce generation for script-src. See middleware.ts
+  // for the nonce-based CSP policy and rationale.
 };
 
 export default nextConfig;

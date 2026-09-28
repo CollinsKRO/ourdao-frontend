@@ -8,6 +8,12 @@ const mockAttach = vi.fn()
 const mockToastSuccess = vi.fn()
 const mockToastError = vi.fn()
 let mockStats: Record<string, unknown> = { features: { documentStorage: true } }
+const mockUseLoanTerms = vi.fn()
+const NO_TERMS = { terms: null, isLoading: false, isError: false }
+
+// Mutable so a test can put the wallet back into its pre-restore state, which
+// is what a hard refresh looks like for the first few renders (#307).
+let mockUserData: Record<string, unknown> = { isConnected: true, isMember: true, hasActiveLoan: false }
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
@@ -27,23 +33,28 @@ vi.mock('@/components/AppShell', () => ({
 
 vi.mock('@/hooks/useDAO', () => ({
   useDAOStats: () => mockStats,
-  useUserData: () => ({
-    isConnected: true,
-    isMember: true,
-    hasActiveLoan: false,
-  }),
+  useUserData: () => mockUserData,
   useLoanRequest: () => ({
     requestLoan: (...args: unknown[]) => mockRequestLoan(...args),
     isPending: false,
     error: null,
     isSuccess: false,
   }),
+  useLoanTerms: (...args: unknown[]) => mockUseLoanTerms(...args),
   useAttachDocument: () => ({
     attach: (...args: unknown[]) => mockAttach(...args),
     isPending: false,
     error: null,
     isSuccess: false,
   }),
+}))
+
+vi.mock('@/lib/responsive', () => ({
+  useIsMobile: () => false,
+  useResponsiveCardLayout: () => ({ getCardGridClass: () => 'grid-cols-4' }),
+  // FormSkeleton (rendered while membership resolves) pulls this in
+  // transitively via ui/skeleton.tsx.
+  useNetworkAware: () => ({ shouldOptimize: false }),
 }))
 
 async function fillAmountAndAdvance(amount = '10') {
@@ -61,10 +72,55 @@ describe('RequestLoanPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockStats = { features: { documentStorage: true } }
+    mockUserData = { isConnected: true, isMember: true, hasActiveLoan: false }
     mockRequestLoan.mockResolvedValue(42)
     mockAttach.mockResolvedValue({ hash: 'txhash' })
+    mockUseLoanTerms.mockReturnValue(NO_TERMS)
   })
   afterEach(() => vi.useRealTimers())
+
+  // #307 — the page used to run an unguarded `if (!userData.isConnected)
+  // router.push('/')`, which fires during the window where the wallet is
+  // still restoring and isConnected is false for a wallet that is connected.
+  describe('membership guard', () => {
+    it('does not redirect away while the wallet is still restoring', async () => {
+      // Exactly what useUserData returns mid-restore: no address yet, the
+      // membership query never ran, so isMember defaults to false.
+      mockUserData = { isConnected: false, isMember: false, isLoading: true, hasActiveLoan: false }
+      render(<RequestLoanPage />)
+
+      expect(mockPush).not.toHaveBeenCalled()
+    })
+
+    it('does not flash "Access Restricted" at a member during the restore window', async () => {
+      mockUserData = { isConnected: false, isMember: false, isLoading: true, hasActiveLoan: false }
+      render(<RequestLoanPage />)
+
+      expect(screen.queryByText('Access Restricted')).not.toBeInTheDocument()
+      expect(screen.queryByText(/You must be a DAO member to request loans/)).not.toBeInTheDocument()
+    })
+
+    it('redirects to / once the restore settles and there is genuinely no wallet', async () => {
+      mockUserData = { isConnected: false, isMember: false, isLoading: false, hasActiveLoan: false }
+      render(<RequestLoanPage />)
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/'))
+    })
+
+    it('redirects to /register once settled and confirmed a non-member', async () => {
+      mockUserData = { isConnected: true, isMember: false, isLoading: false, hasActiveLoan: false }
+      render(<RequestLoanPage />)
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/register'))
+    })
+
+    it('keeps a connected member on the page with no redirect', async () => {
+      render(<RequestLoanPage />)
+
+      await screen.findByLabelText(/Loan Amount/)
+      expect(mockPush).not.toHaveBeenCalled()
+    })
+  })
 
   it('does not render a purpose field, privacy toggle, or privacy secret anywhere in the flow', async () => {
     render(<RequestLoanPage />)
@@ -137,6 +193,57 @@ describe('RequestLoanPage', () => {
       fireEvent.click(screen.getByRole('button', { name: /Submit Request/ }))
 
       await waitFor(() => expect(mockRequestLoan).toHaveBeenCalledWith(BigInt(1000) * BigInt(10 ** 7)))
+    })
+  })
+
+  describe('loan terms priced by the contract', () => {
+    const TOKEN = BigInt(10 ** 7)
+
+    it('prices the entered amount with calculate_loan_terms and shows its terms, not an invented APR', () => {
+      mockUseLoanTerms.mockReturnValue({
+        terms: { interestRate: 1250, totalRepayment: BigInt(1125) * TOKEN, duration: 365 * 86400 },
+        isLoading: false,
+        isError: false,
+      })
+      render(<RequestLoanPage />)
+      fireEvent.change(screen.getByLabelText(/Loan Amount/), { target: { value: '1000' } })
+
+      expect(mockUseLoanTerms).toHaveBeenLastCalledWith(BigInt(1000) * TOKEN)
+      expect(screen.getByText('12.50% over the term')).toBeInTheDocument()
+      expect(screen.getByText('1125')).toBeInTheDocument()
+      expect(screen.getByText('1 year')).toBeInTheDocument()
+      expect(screen.queryByText(/APR/)).not.toBeInTheDocument()
+    })
+
+    it('shows a loading state while the terms are being calculated', () => {
+      mockUseLoanTerms.mockReturnValue({ terms: null, isLoading: true, isError: false })
+      render(<RequestLoanPage />)
+      fireEvent.change(screen.getByLabelText(/Loan Amount/), { target: { value: '10' } })
+
+      expect(screen.getByText(/Calculating terms/)).toBeInTheDocument()
+    })
+
+    it('says so when the terms read fails instead of guessing a rate', () => {
+      mockUseLoanTerms.mockReturnValue({ terms: null, isLoading: false, isError: true })
+      render(<RequestLoanPage />)
+      fireEvent.change(screen.getByLabelText(/Loan Amount/), { target: { value: '10' } })
+
+      expect(screen.getByText(/Couldn.t load the loan terms/)).toBeInTheDocument()
+      expect(screen.queryByText(/%/)).not.toBeInTheDocument()
+    })
+
+    it('does not price an amount above the maximum loan', () => {
+      mockStats = {
+        features: { documentStorage: true },
+        initialized: true,
+        treasuryBalance: BigInt(5_000) * TOKEN,
+        maxLoanToTreasuryRatio: 2000,
+      }
+      render(<RequestLoanPage />)
+      fireEvent.change(screen.getByLabelText(/Loan Amount/), { target: { value: '1000.5' } })
+
+      expect(mockUseLoanTerms).toHaveBeenLastCalledWith(null)
+      expect(screen.getByText(/Enter an amount within the maximum/)).toBeInTheDocument()
     })
   })
 

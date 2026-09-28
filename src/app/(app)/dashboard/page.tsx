@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { ConnectButton } from '@/components/ConnectButton'
@@ -17,7 +16,11 @@ import {
   TrophyIcon,
 } from '@heroicons/react/24/outline'
 import { useDAOStats, useUserData, useRewards, useDAOEvents, eventLabel } from '@/hooks/useDAO'
-import { formatToken, formatDate, formatAddress } from '@/lib/utils'
+import { useRequireMember } from '@/hooks/useRequireMember'
+import { LoadError } from '@/components/LoadError'
+import { useAnnounceLoad } from '@/lib/useAnnounceLoad'
+import { formatToken, formatDate } from '@/lib/utils'
+import { formatStellarAddress } from '@/lib/stellar'
 import { MEMBER_STATUS_LABELS, NON_MEMBER_LABEL } from '@/constants'
 import toast from 'react-hot-toast'
 import { useIsMobile, useResponsiveCardLayout } from '@/lib/responsive'
@@ -25,23 +28,19 @@ import { LoadingSpinner } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/PageHeader'
 
 export default function DashboardPage() {
-  const router = useRouter()
   const stats = useDAOStats()
   const userData = useUserData()
   const { claimRewards, claimYield, isPending, isSuccess } = useRewards()
-  const { events } = useDAOEvents()
+  const { events, isError: eventsError, refetch: refetchEvents } = useDAOEvents()
+  // The redirect decision lives in the shared guard (#307) so it waits for the
+  // wallet restore *and* the membership read before acting. Previously the
+  // effect below only checked the query's isLoading, which is false during the
+  // window where the wallet hasn't reported an address yet — so a hard refresh
+  // could send a connected member to /register (#69, #307).
+  const { isResolving } = useRequireMember({ userData })
+  useAnnounceLoad('Dashboard', userData.isLoading, !!userData.isError)
   const isMobile = useIsMobile()
   const { getCardGridClass } = useResponsiveCardLayout()
-
-  useEffect(() => {
-    // Wait for the membership read to settle before deciding — otherwise
-    // this fires while isMember is still the "not yet known" default
-    // (false), bouncing every legitimate member through /register on every
-    // load (#69).
-    if (userData.isConnected && !userData.isLoading && !userData.isMember) {
-      router.push('/register')
-    }
-  }, [userData.isConnected, userData.isLoading, userData.isMember, router])
 
   useEffect(() => {
     if (isSuccess) {
@@ -55,6 +54,21 @@ export default function DashboardPage() {
 
   const handleClaimYield = async () => {
     await claimYield()
+  }
+
+  // The "not connected" card is only correct once the restore attempt has
+  // settled; before that, `isConnected` is false for a wallet that is connected.
+  if (isResolving) {
+    // Same "not yet known" collapse as isAdmin on the admin panel (#69) —
+    // isMember reads false until the query resolves, which would otherwise
+    // redirect to /register and flash the "Not a Member" card on every
+    // load. No AppShell wrapper needed — the (app) route-group layout
+    // already provides it.
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <LoadingSpinner size="lg" />
+      </div>
+    )
   }
 
   if (!userData.isConnected) {
@@ -86,15 +100,13 @@ export default function DashboardPage() {
     )
   }
 
-  if (userData.isLoading) {
-    // Same "not yet known" collapse as isAdmin on the admin panel (#69) —
-    // isMember reads false until the query resolves, which would otherwise
-    // redirect to /register and flash the "Not a Member" card on every
-    // load. No AppShell wrapper needed — the (app) route-group layout
-    // already provides it.
+  if (userData.isError) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <LoadingSpinner size="lg" />
+      <div className="mx-auto mt-8 max-w-md">
+        <LoadError
+          what="your membership data"
+          onRetry={userData.refetch}
+        />
       </div>
     )
   }
@@ -191,7 +203,7 @@ export default function DashboardPage() {
                   </div>
                   <div>
                     <h3 className="text-lg font-semibold text-foreground">
-                      {formatAddress(userData.address || '')}
+                      {formatStellarAddress(userData.address || '')}
                     </h3>
                     <p className="text-sm text-muted-foreground">
                       Status: {userData.member ? MEMBER_STATUS_LABELS[userData.member.status] : NON_MEMBER_LABEL}
@@ -423,7 +435,9 @@ export default function DashboardPage() {
                 <CardDescription>Latest DAO events</CardDescription>
               </CardHeader>
               <CardContent>
-                {events.length > 0 ? (
+                {eventsError ? (
+                  <LoadError what="recent activity" onRetry={() => void refetchEvents()} />
+                ) : events.length > 0 ? (
                   <div className="space-y-3">
                     {events.slice(0, 5).map((event, index) => (
                       <div key={index} className="flex items-center space-x-3 text-sm">

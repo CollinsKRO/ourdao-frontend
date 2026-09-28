@@ -1,0 +1,37 @@
+# CODEOWNERS (#249)
+#
+# NOTE ON THESE ASSIGNMENTS: every line below points to @bbjiggy. That is a
+# placeholder, not a claim that @bbjiggy is the intended long-term owner of
+# these paths — actual review ownership is explicitly the maintainers' call,
+# not something to decide unilaterally in this change. @bbjiggy is used here
+# only because they're the repo's most active contributor/issue author, and
+# a CODEOWNERS file with no real entries (or with made-up team names that
+# don't exist as GitHub users/teams) wouldn't actually do anything — GitHub
+# silently ignores unknown owners. The maintainers should update the owners
+# below (ideally to a team, e.g. @ourdao/frontend-maintainers, once one
+# exists) to reflect real team structure.
+#
+# GitHub applies these top-to-bottom with "last match wins", so broad rules
+# come first and more specific/sensitive paths are listed after to override
+# them.
+
+# Default: anything under src/ not covered by a more specific rule below.
+/src/ @bbjiggy
+
+# The only server-side code in this app, and where the Pinata (IPFS) upload
+# credential is used — a compromised or careless change here has different
+# blast radius than a client component.
+/src/app/api/ @bbjiggy
+
+# Freighter integration — the one place the app talks to the wallet
+# extension. The app never touches a private key directly (see
+# CONTRIBUTING.md), but this file is where that boundary is enforced.
+/src/lib/wallet.tsx @bbjiggy
+
+# Contract call signatures and the transaction-signing path. A mismatch here
+# vs. the deployed Soroban contract fails at signature time for a real
+# member, not in CI.
+/src/lib/dao-client.ts @bbjiggy
+
+# Security headers (CSP, HSTS, frame-ancestors, etc.) for the whole app.
+/next.config.ts @bbjiggy

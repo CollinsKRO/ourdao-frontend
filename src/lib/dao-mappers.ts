@@ -29,6 +29,12 @@ export const tag = (v: unknown): string => String(Array.isArray(v) ? v[0] : v)
 export function toLoan(l: BackendLoan): Loan {
   const amount = asBigInt(l.amount)
   const outstanding = asBigInt(l.outstanding)
+  const amountPaid = l.repaid_amount != null
+    ? asBigInt(l.repaid_amount)
+    : (amount > outstanding ? amount - outstanding : BigInt(0))
+  const totalInterest = l.interest_charge != null
+    ? asBigInt(l.interest_charge)
+    : BigInt(0)
   return {
     id: l.id,
     borrower: l.borrower,
@@ -36,9 +42,9 @@ export function toLoan(l: BackendLoan): Loan {
     interestRate: 0,
     repaymentTerm: 0,
     startTime: l.approved_ledger ?? 0,
-    endTime: 0,
-    amountPaid: amount > outstanding ? amount - outstanding : BigInt(0),
-    totalInterest: BigInt(0),
+    endTime: l.due_time ?? 0,
+    amountPaid,
+    totalInterest,
     isActive: l.status === 'active',
     collateralAmount: BigInt(0),
   }
@@ -79,6 +85,24 @@ export function resolveLoanPolicy(
     maxLoanDuration: numOr(rawPolicy?.max_loan_duration, LOAN_POLICY_FALLBACKS.maxLoanDuration),
     consensusThreshold: numOr(consensusThreshold, LOAN_POLICY_FALLBACKS.consensusThreshold),
     fromChain,
+  }
+}
+
+/** Terms the contract would set for a loan of a given amount, as priced by
+ *  `calculate_loan_terms` from the live treasury and loan policy. */
+export interface UILoanTerms {
+  /** Flat rate over the whole term, in basis points (not annualised). */
+  interestRate: number
+  totalRepayment: bigint
+  /** Loan duration in seconds. */
+  duration: number
+}
+
+export function mapLoanTerms(raw: Record<string, unknown>): UILoanTerms {
+  return {
+    interestRate: Number(raw.interest_rate ?? 0),
+    totalRepayment: asBigInt(raw.total_repayment),
+    duration: Number(raw.duration ?? 0),
   }
 }
 

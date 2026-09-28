@@ -8,6 +8,7 @@ import {
   type ActivityItem
 } from '@/lib/pushNotifications'
 import { useIsMobile } from '@/lib/responsive'
+import { LoadError } from '@/components/LoadError'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import {
   Bell, 
@@ -25,6 +26,7 @@ import {
   Wallet,
   Shield
 } from 'lucide-react'
+import { VirtualizedList } from '@/components/ui/virtualized-list'
 
 interface NotificationCenterProps {
   className?: string
@@ -39,6 +41,8 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
 
   const {
     notifications,
+    isError: notificationsError,
+    refetch: refetchNotifications,
     unreadCount,
     markAsRead,
     markAllAsRead,
@@ -53,7 +57,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
     isListening
   } = useAutoNotifications()
 
-  const { activities } = useActivityFeed(50)
+  const { activities, isError: activityError, refetch: refetchActivity } = useActivityFeed(50)
   const { supported, permission } = usePushNotifications()
 
   // Auto-start listening when component mounts
@@ -114,6 +118,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
           <button
             className="relative p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
             title="Notifications"
+            aria-label="Open notifications"
           >
             <Bell className="w-6 h-6" />
             {unreadCount > 0 && (
@@ -139,6 +144,7 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
         onClick={() => setIsOpen(!isOpen)}
         className="relative p-2 rounded-lg hover:bg-accent transition-colors"
         title="Notifications"
+        aria-label="Toggle notifications"
       >
         <Bell className="w-6 h-6" />
         {unreadCount > 0 && (
@@ -250,7 +256,9 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
             <div className="flex-1 overflow-y-auto">
               {activeTab === 'notifications' ? (
                 <div className="divide-y divide-border">
-                  {filteredNotifications.length === 0 ? (
+                  {notificationsError && filteredNotifications.length === 0 ? (
+                    <LoadError what="notifications" onRetry={() => void refetchNotifications()} className="m-4" />
+                  ) : filteredNotifications.length === 0 ? (
                     <div className={`${isMobile ? 'p-6' : 'p-8'} text-center text-muted-foreground`}>
                       <Bell className={`${isMobile ? 'w-8 h-8' : 'w-12 h-12'} mx-auto mb-3 opacity-30`} />
                       <p className={isMobile ? 'text-sm' : ''}>No notifications yet</p>
@@ -268,82 +276,92 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
                       </p>
                     </div>
                   ) : (
-                    filteredNotifications.map(notification => (
-                      <div
-                        key={notification.id}
-                        className={`p-3 hover:bg-accent cursor-pointer ${
-                          !notification.read ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''
-                        }`}
-                        onClick={() => {
-                          markAsRead(notification.id)
-                          if (notification.actionUrl) {
-                            window.location.href = notification.actionUrl
-                            setIsOpen(false)
-                          }
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
+                    <VirtualizedList
+                      items={filteredNotifications}
+                      threshold={30}
+                      itemHeight={90}
+                      className="divide-y divide-border"
+                      listAriaLabel="Notifications list"
+                      keyExtractor={(n) => n.id}
+                      renderItem={(notification) => (
+                        <div
+                          className={`p-3 hover:bg-accent cursor-pointer ${
+                            !notification.read ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''
+                          }`}
+                          onClick={() => {
                             markAsRead(notification.id)
                             if (notification.actionUrl) {
                               window.location.href = notification.actionUrl
                               setIsOpen(false)
                             }
-                          }
-                        }}
-                        role="button"
-                        tabIndex={0}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center space-x-2 mb-1">
-                              <div className={`w-2 h-2 rounded-full ${
-                                getNotificationTypeColor(notification.type).split(' ')[1]
-                              }`} />
-                              <h4 className={`text-sm font-medium ${
-                                !notification.read ? 'text-foreground' : 'text-foreground'
-                              }`}>
-                                {notification.title}
-                              </h4>
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              markAsRead(notification.id)
+                              if (notification.actionUrl) {
+                                window.location.href = notification.actionUrl
+                                setIsOpen(false)
+                              }
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center space-x-2 mb-1">
+                                <div className={`w-2 h-2 rounded-full ${
+                                  getNotificationTypeColor(notification.type).split(' ')[1]
+                                }`} />
+                                <h4 className={`text-sm font-medium ${
+                                  !notification.read ? 'text-foreground' : 'text-foreground'
+                                }`}>
+                                  {notification.title}
+                                </h4>
+                              </div>
+                              <p className="text-sm text-muted-foreground mb-2">
+                                {notification.message}
+                              </p>
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-muted-foreground">
+                                  {formatTime(notification.timestamp)}
+                                </span>
+                                {!notification.read && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      markAsRead(notification.id)
+                                    }}
+                                    className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                                    aria-label="Mark as read"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                            <p className="text-sm text-muted-foreground mb-2">
-                              {notification.message}
-                            </p>
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs text-muted-foreground">
-                                {formatTime(notification.timestamp)}
-                              </span>
-                              {!notification.read && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    markAsRead(notification.id)
-                                  }}
-                                  className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                                  aria-label="Mark as read"
-                                >
-                                  <Check className="w-3 h-3" />
-                                </button>
-                              )}
-                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                removeNotification(notification.id)
+                              }}
+                              className="ml-2 p-1 hover:bg-accent rounded"
+                              title="Remove"
+                              aria-label="Remove notification"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
                           </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              removeNotification(notification.id)
-                            }}
-                            className="ml-2 p-1 hover:bg-accent rounded"
-                            title="Remove"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
                         </div>
-                      </div>
-                    ))
+                      )}
+                    />
                   )}
                 </div>
               ) : (
                 <div className="divide-y divide-border">
-                  {activities.length === 0 ? (
+                  {activityError && activities.length === 0 ? (
+                    <LoadError what="recent activity" onRetry={() => void refetchActivity()} className="m-4" />
+                  ) : activities.length === 0 ? (
                     <div className={`${isMobile ? 'p-6' : 'p-8'} text-center text-muted-foreground`}>
                       <Activity className={`${isMobile ? 'w-8 h-8' : 'w-12 h-12'} mx-auto mb-3 opacity-30`} />
                       <p className={isMobile ? 'text-sm' : ''}>No recent activity</p>
@@ -352,37 +370,45 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ className = '' 
                       </p>
                     </div>
                   ) : (
-                    activities.map(activity => (
-                      <div key={activity.id} className="p-3 hover:bg-accent">
-                        <div className="flex items-start space-x-3">
-                          <div className="flex-shrink-0 mt-1 text-muted-foreground">
-                            {getActivityIcon(activity.type)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h4 className="text-sm font-medium text-foreground mb-1">
-                              {activity.title}
-                            </h4>
-                            <p className="text-sm text-muted-foreground mb-2">
-                              {activity.description}
-                            </p>
-                            <div className="flex items-center justify-between text-xs text-muted-foreground">
-                              <div className="flex items-center space-x-2">
-                                <Clock className="w-3 h-3" />
-                                <span>{formatTime(activity.timestamp)}</span>
-                              </div>
-                              {activity.user && (
-                                <div className="flex items-center space-x-1">
-                                  <User className="w-3 h-3" />
-                                  <span className="truncate max-w-20">
-                                    {activity.user}
-                                  </span>
+                    <VirtualizedList
+                      items={activities}
+                      threshold={30}
+                      itemHeight={90}
+                      className="divide-y divide-border"
+                      listAriaLabel="Activity feed"
+                      keyExtractor={(activity) => activity.id}
+                      renderItem={(activity) => (
+                        <div className="p-3 hover:bg-accent">
+                          <div className="flex items-start space-x-3">
+                            <div className="flex-shrink-0 mt-1 text-muted-foreground">
+                              {getActivityIcon(activity.type)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h4 className="text-sm font-medium text-foreground mb-1">
+                                {activity.title}
+                              </h4>
+                              <p className="text-sm text-muted-foreground mb-2">
+                                {activity.description}
+                              </p>
+                              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                <div className="flex items-center space-x-2">
+                                  <Clock className="w-3 h-3" />
+                                  <span>{formatTime(activity.timestamp)}</span>
                                 </div>
-                              )}
+                                {activity.user && (
+                                  <div className="flex items-center space-x-1">
+                                    <User className="w-3 h-3" />
+                                    <span className="truncate max-w-20">
+                                      {activity.user}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ))
+                      )}
+                    />
                   )}
                 </div>
               )}

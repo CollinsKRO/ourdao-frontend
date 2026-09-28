@@ -76,6 +76,73 @@ const noRawGrayClasses = {
   },
 };
 
+// jsx-a11y's control-has-associated-label treats ANY child component as
+// possible label text, so an icon-only <button><X /></button> passes it and is
+// announced as just "button" (#231). This rule closes that gap: a button/link
+// whose children are only elements (no text, no expression, no sr-only text)
+// must carry aria-label / aria-labelledby / title.
+const noUnnamedIconControls = {
+  meta: {
+    type: "problem",
+    docs: { description: "Icon-only interactive controls need an accessible name" },
+    messages: {
+      unnamed:
+        "<{{ name }}> has no accessible name: its children are only icons/elements. Add aria-label (or aria-labelledby / visible text).",
+    },
+    schema: [],
+  },
+  create(context) {
+    const CONTROLS = new Set(["button", "Button", "a", "Link", "SheetTrigger", "DialogTrigger"]);
+    const NAME_ATTRS = new Set(["aria-label", "aria-labelledby", "title"]);
+
+    function hasText(child) {
+      if (child.type === "JSXText") return child.value.trim().length > 0;
+      // {expression}: assume it can render text.
+      if (child.type === "JSXExpressionContainer") {
+        return child.expression.type !== "JSXEmptyExpression";
+      }
+      if (child.type === "JSXElement") {
+        const el = child.openingElement.name;
+        // An sr-only span is the other conventional way to name an icon control.
+        const cls = child.openingElement.attributes.find(
+          (a) => a.type === "JSXAttribute" && a.name.name === "className",
+        );
+        if (
+          el.type === "JSXIdentifier" &&
+          cls?.value?.type === "Literal" &&
+          String(cls.value.value).split(/\s+/).includes("sr-only")
+        ) {
+          return true;
+        }
+        return child.children.some(hasText);
+      }
+      return false;
+    }
+
+    return {
+      JSXElement(node) {
+        const opening = node.openingElement;
+        if (opening.name.type !== "JSXIdentifier" || !CONTROLS.has(opening.name.name)) return;
+        const attrs = opening.attributes;
+        if (attrs.some((a) => a.type === "JSXSpreadAttribute")) return;
+        // asChild delegates to its child, which is checked on its own.
+        if (attrs.some((a) => a.type === "JSXAttribute" && a.name.name === "asChild")) return;
+        if (attrs.some((a) => a.type === "JSXAttribute" && NAME_ATTRS.has(a.name.name))) return;
+        if (node.children.length === 0 && !attrs.length) return;
+        if (node.children.some(hasText)) return;
+        context.report({ node, messageId: "unnamed", data: { name: opening.name.name } });
+      },
+    };
+  },
+};
+
+const ourdaoPlugin = {
+  rules: {
+    "no-raw-gray-classes": noRawGrayClasses,
+    "no-unnamed-icon-controls": noUnnamedIconControls,
+  },
+};
+
 const eslintConfig = [
   ...nextCoreWebVitals,
   ...nextTypescript,
@@ -85,6 +152,46 @@ const eslintConfig = [
     plugins: {},
     rules: {
       ...jsxA11y.flatConfigs.recommended.rules,
+      // "recommended" does not require an accessible NAME on interactive
+      // elements — an icon-only <button> passes it and is announced as just
+      // "button" (#231). These make a missing name a lint failure.
+      "jsx-a11y/control-has-associated-label": [
+        "error",
+        {
+          labelAttributes: ["aria-label", "aria-labelledby", "title"],
+          controlComponents: ["Button", "Input", "Link"],
+          depth: 5,
+          ignoreElements: ["audio", "canvas", "embed", "input", "textarea", "tr", "video"],
+          ignoreRoles: [
+            "grid",
+            "listbox",
+            "menu",
+            "menubar",
+            "radiogroup",
+            "row",
+            "tablist",
+            "toolbar",
+            "tree",
+            "treegrid",
+          ],
+        },
+      ],
+      "jsx-a11y/anchor-has-content": "error",
+      "jsx-a11y/label-has-associated-control": [
+        "error",
+        { assert: "either", depth: 4 },
+      ],
+    },
+    settings: {
+      // Teach the plugin that our wrapper components render these elements,
+      // so <Button/> and <Input/> are checked like <button> and <input>.
+      "jsx-a11y": {
+        components: {
+          Button: "button",
+          Input: "input",
+          Link: "a",
+        },
+      },
     },
   },
   {
@@ -110,10 +217,13 @@ const eslintConfig = [
     },
   },
   {
+    files: ["src/**/*.{ts,tsx}"],
+    plugins: { ourdao: ourdaoPlugin },
+    rules: { "ourdao/no-unnamed-icon-controls": "error" },
+  },
+  {
     files: ["src/app/**/*.{ts,tsx}"],
-    plugins: {
-      ourdao: { rules: { "no-raw-gray-classes": noRawGrayClasses } },
-    },
+    plugins: { ourdao: ourdaoPlugin },
     rules: {
       "ourdao/no-raw-gray-classes": "error",
     },

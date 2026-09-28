@@ -124,6 +124,14 @@ describe('AppShell navigation', () => {
     expect(screen.getByText('Testnet')).toBeInTheDocument()
   })
 
+  it('shows the running build version and commit so bug reports can name it (#250)', () => {
+    vi.stubEnv('NEXT_PUBLIC_APP_VERSION', '0.1.0')
+    vi.stubEnv('NEXT_PUBLIC_GIT_SHA', 'd44e397abcdef')
+    renderWithProviders(<AppShell>content</AppShell>)
+    expect(screen.getAllByText('v0.1.0 (d44e397)').length).toBeGreaterThan(0)
+    vi.unstubAllEnvs()
+  })
+
   it('does not render the network badge when wallet is not connected', () => {
     mockWalletAddress = null
     mockIsConnected = false

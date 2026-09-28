@@ -8,46 +8,51 @@
  * persists across navigation instead of remounting per page. A page's own
  * title/subtitle/actions header is <PageHeader>, rendered by the page itself.
  */
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  HomeIcon,
-  BanknotesIcon,
-  UsersIcon,
-  BuildingLibraryIcon,
-  ShieldCheckIcon,
-  Cog6ToothIcon,
-  Bars3Icon,
-  ExclamationTriangleIcon,
-} from '@heroicons/react/24/outline'
+  Home,
+  Banknote,
+  Users,
+  Landmark,
+  ShieldCheck,
+  Settings,
+  Menu,
+  TriangleAlert,
+  LogOut,
+} from 'lucide-react'
 import { ConnectButton } from '@/components/ConnectButton'
 import { NetworkBadge } from '@/components/NetworkBadge'
 import NotificationCenter from '@/components/NotificationCenter'
 import { OrbitMark } from '@/components/OrbitMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
-import { useUserData } from '@/hooks/useDAO'
+import { useUserData, useDAOStats } from '@/hooks/useDAO'
+import { buildLabel } from '@/lib/build-info'
 import { isContractConfigured } from '@/lib/stellar'
 import { cn } from '@/lib/utils'
+import { MAIN_CONTENT_ID } from '@/lib/a11y'
 
 interface NavItem {
   name: string
   href: string
-  icon: typeof HomeIcon
+  icon: typeof Home
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
-  { name: 'Loans', href: '/loans', icon: BanknotesIcon },
-  { name: 'Governance', href: '/governance', icon: UsersIcon },
-  { name: 'Treasury', href: '/treasury', icon: BuildingLibraryIcon },
-  { name: 'Privacy', href: '/privacy', icon: ShieldCheckIcon },
+  { name: 'Dashboard', href: '/dashboard', icon: Home },
+  { name: 'Loans', href: '/loans', icon: Banknote },
+  { name: 'Governance', href: '/governance', icon: Users },
+  { name: 'Treasury', href: '/treasury', icon: Landmark },
+  { name: 'Privacy', href: '/privacy', icon: ShieldCheck },
+  { name: 'Exit', href: '/exit', icon: LogOut },
 ]
 
-const ADMIN_ITEM: NavItem = { name: 'Admin', href: '/admin', icon: Cog6ToothIcon }
+const ADMIN_ITEM: NavItem = { name: 'Admin', href: '/admin', icon: Settings }
 
-function isActive(pathname: string, href: string): boolean {
+function isActive(pathname: string | null, href: string): boolean {
+  if (!pathname) return false
   return pathname === href || pathname.startsWith(`${href}/`)
 }
 
@@ -101,12 +106,39 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   )
 }
 
+// Names the running build so a bug report can be matched to CHANGELOG.md (#250).
+function BuildLabel() {
+  return <p className="px-6 pt-4 text-xs text-muted-foreground">{buildLabel()}</p>
+}
+
 interface AppShellProps {
   children: ReactNode
 }
 
 export function AppShell({ children }: AppShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false)
+  const stats = useDAOStats()
+  const pathname = usePathname()
+  const mainRef = useRef<HTMLElement>(null)
+  const previousPathname = useRef(pathname)
+
+  // Client-side navigation swaps the page without a document load, so the
+  // browser leaves focus on the (now stale) link that was clicked and a
+  // screen-reader user is never told the page changed. On a real route change
+  // move focus to the new page's heading (or <main> if it has none). Next's
+  // built-in route announcer reads the new document title. Skipped on first
+  // render so the initial load keeps the browser's native focus behaviour.
+  useEffect(() => {
+    if (previousPathname.current === pathname) return
+    previousPathname.current = pathname
+    const main = mainRef.current
+    if (!main) return
+    const heading = main.querySelector<HTMLElement>('h1')
+    const target = heading ?? main
+    if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1')
+    target.focus({ preventScroll: true })
+    window.scrollTo?.({ top: 0 })
+  }, [pathname])
 
   return (
     // Wraps the whole shell (not just the drawer) so SheetTrigger — deep in
@@ -117,6 +149,14 @@ export function AppShell({ children }: AppShellProps) {
     // the drawer closes (#68).
     <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
     <div className="min-h-screen bg-background">
+      {/* Skip link — first focusable element so keyboard and screen-reader
+          users can bypass the header/nav. Visible on focus only. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[200] focus:rounded-lg focus:bg-primary-600 focus:px-4 focus:py-2 focus:text-white"
+      >
+        Skip to main content
+      </a>
       {/* Top bar */}
       <header className="sticky top-0 z-40 border-b border-border bg-card/80 backdrop-blur">
         <div className="flex h-16 items-center gap-3 px-4 sm:px-6">
@@ -126,7 +166,7 @@ export function AppShell({ children }: AppShellProps) {
               className="rounded-lg p-2 text-muted-foreground hover:bg-accent lg:hidden"
               aria-label="Open navigation"
             >
-              <Bars3Icon className="h-6 w-6" />
+              <Menu className="h-6 w-6" />
             </button>
           </SheetTrigger>
           <BrandMark />
@@ -141,7 +181,7 @@ export function AppShell({ children }: AppShellProps) {
 
       {!isContractConfigured() && (
         <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300 sm:px-6">
-          <ExclamationTriangleIcon className="h-5 w-5 shrink-0" />
+          <TriangleAlert className="h-5 w-5 shrink-0" />
           <span>
             No contract configured — set{' '}
             <code className="rounded bg-amber-100 px-1 py-0.5 font-mono text-xs dark:bg-amber-900/40">
@@ -152,10 +192,20 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       )}
 
+      {stats.indexerStale && (
+        <div data-testid="indexer-stale-banner" className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300 sm:px-6">
+          <TriangleAlert className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span>
+            Indexer data is stale{stats.secondsSinceUpdate != null ? ` (last updated ${stats.secondsSinceUpdate}s ago)` : ''}. Displayed off-chain stats and history may be delayed.
+          </span>
+        </div>
+      )}
+
       <div className="mx-auto flex w-full max-w-7xl">
         {/* Desktop sidebar */}
         <aside className="sticky top-16 hidden h-[calc(100vh-4rem)] w-60 shrink-0 flex-col border-r border-border bg-card py-4 lg:flex">
           <NavLinks />
+          <BuildLabel />
         </aside>
 
         {/* Mobile drawer — built on the vendored Radix-based Sheet primitive
@@ -173,11 +223,17 @@ export function AppShell({ children }: AppShellProps) {
               <BrandMark />
             </div>
             <NavLinks onNavigate={() => setMobileOpen(false)} />
+            <BuildLabel />
           </div>
         </SheetContent>
 
         {/* Main content */}
-        <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <main
+          id={MAIN_CONTENT_ID}
+          ref={mainRef}
+          tabIndex={-1}
+          className="min-w-0 flex-1 px-4 py-6 focus:outline-none sm:px-6 lg:px-8 [&_h1:focus]:outline-none"
+        >
           {children}
         </main>
       </div>

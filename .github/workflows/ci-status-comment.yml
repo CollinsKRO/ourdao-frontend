@@ -39,6 +39,7 @@ jobs:
               ['Typecheck', 'typecheck', 'npm run typecheck'],
               ['Test', 'test', 'npm test'],
               ['Build', 'build', 'npm run build'],
+              ['Visual', 'visual', 'npm run test:visual'],
             ];
 
             const icon = (r) =>

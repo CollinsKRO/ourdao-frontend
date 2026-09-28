@@ -23,11 +23,15 @@ import {
   useHasVoted,
   type UILoanProposal,
 } from '@/hooks/useDAO'
+import { LoadError } from '@/components/LoadError'
+import { useAnnounceLoad } from '@/lib/useAnnounceLoad'
 import { useNow } from '@/hooks/useNow'
-import { formatToken, formatDate, formatAddress, calculatePercentage } from '@/lib/utils'
+import { formatToken, formatDate, calculatePercentage } from '@/lib/utils'
+import { formatStellarAddress } from '@/lib/stellar'
 import { PROPOSAL_STATUS_LABELS } from '@/constants'
 import { PageHeader } from '@/components/PageHeader'
 import type { UserData } from '@/types/dao'
+import { VirtualizedList } from '@/components/ui/virtualized-list'
 
 function getStatusIcon(status: number) {
   switch (status) {
@@ -119,7 +123,7 @@ function LoanProposalCard({
                 )}
               </div>
               <CardDescription>
-                By {formatAddress(proposal.borrower)} • Created {formatDate(proposal.creationTime)}
+                By {formatStellarAddress(proposal.borrower)} • Created {formatDate(proposal.creationTime)}
               </CardDescription>
             </div>
           </div>
@@ -238,7 +242,8 @@ function LoanProposalCard({
 export default function LoansPage() {
   const userData = useUserData()
   const { voteOnProposal, isPending } = useVoting()
-  const { proposals, isLoading, hasMore, loadMore, isLoadingMore, hasErrors } = useLoanProposals()
+  const { proposals, isLoading, hasMore, loadMore, isLoadingMore, hasErrors, isError, refetch } = useLoanProposals()
+  useAnnounceLoad('Loan proposals', isLoading, isError)
   const now = useNow()
 
   const [filters, setFilters] = useState({
@@ -450,6 +455,8 @@ export default function LoansPage() {
                 </Card>
               ))}
             </div>
+          ) : isError && proposals.length === 0 ? (
+            <LoadError what="loan proposals" onRetry={refetch} />
           ) : filteredProposals.length === 0 ? (
             <Card>
               <CardContent className="p-12 text-center">
@@ -463,16 +470,23 @@ export default function LoansPage() {
               </CardContent>
             </Card>
           ) : (
-            filteredProposals.map((proposal) => (
-              <LoanProposalCard
-                key={proposal.id}
-                proposal={proposal}
-                now={now}
-                userData={userData}
-                isPending={isPending}
-                onVote={handleVote}
-              />
-            ))
+            <VirtualizedList
+              items={filteredProposals}
+              keyExtractor={(proposal) => proposal.id}
+              threshold={50}
+              itemHeight={220}
+              className="space-y-6"
+              listAriaLabel="Loan proposals list"
+              renderItem={(proposal) => (
+                <LoanProposalCard
+                  proposal={proposal}
+                  now={now}
+                  userData={userData}
+                  isPending={isPending}
+                  onVote={handleVote}
+                />
+              )}
+            />
           )}
           {!isLoading && hasMore && (
             <div className="flex justify-center">

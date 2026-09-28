@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
+import { reportError } from '@/lib/error-reporting'
 
 /**
  * Catches errors thrown by the root layout itself (outside what error.tsx
@@ -22,6 +23,9 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     console.error('Global error boundary caught:', error)
+    // Subject to the member's error-reporting opt-in (#247) — see
+    // src/lib/error-reporting.ts.
+    reportError(error, { boundary: 'global', digest: error.digest })
   }, [error])
 
   return (
@@ -45,7 +49,7 @@ export default function GlobalError({
             }
           }
         `}</style>
-        <div
+        <main
           style={{
             minHeight: '100vh',
             display: 'flex',
@@ -90,7 +94,7 @@ export default function GlobalError({
               Try again
             </button>
           </div>
-        </div>
+        </main>
       </body>
     </html>
   )

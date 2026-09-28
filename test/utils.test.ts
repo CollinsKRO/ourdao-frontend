@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatFileSize, formatToken, parseToken, formatThreshold, computeMaxLoan } from '@/lib/utils'
+import { formatFileSize, formatToken, parseToken, formatThreshold, formatDuration } from '@/lib/utils'
 
 describe('formatToken', () => {
   it('renders a bare "0" for an exact zero value', () => {
@@ -125,15 +125,14 @@ describe('formatFileSize', () => {
   })
 })
 
-describe('computeMaxLoan', () => {
-  it('applies the policy ratio (basis points) to the treasury balance', () => {
-    expect(computeMaxLoan(BigInt(5_000), 2000)).toBe(BigInt(1_000))
+describe('formatDuration', () => {
+  it('formats whole years', () => {
+    expect(formatDuration(365 * 86400)).toBe('1 year')
+    expect(formatDuration(2 * 365 * 86400)).toBe('2 years')
   })
-  it('floors like the contract\'s integer division', () => {
-    expect(computeMaxLoan(BigInt(9_999), 1)).toBe(BigInt(0))
-  })
-  it('is zero for an empty treasury or a zero ratio', () => {
-    expect(computeMaxLoan(BigInt(0), 2000)).toBe(BigInt(0))
-    expect(computeMaxLoan(BigInt(5_000), 0)).toBe(BigInt(0))
+
+  it('falls back to days for anything else', () => {
+    expect(formatDuration(90 * 86400)).toBe('90 days')
+    expect(formatDuration(86400)).toBe('1 day')
   })
 })

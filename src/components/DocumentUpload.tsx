@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef } from 'react'
+import { useWallet } from '@/lib/wallet'
 import { 
   CloudArrowUpIcon, 
   EyeIcon, 
@@ -34,6 +35,7 @@ export default function DocumentUpload({
   requireEncryption = false,
   showPermissions = true
 }: DocumentUploadProps) {
+  const { address, signMessage } = useWallet()
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -103,19 +105,30 @@ export default function DocumentUpload({
     setUploadProgress(0)
 
     try {
+      const wallet = address ? { address, signMessage } : undefined
       const uploadedDocuments = await uploadMultipleDocuments(
         files,
         encrypt,
         password || undefined,
         setUploadProgress,
-        {
-          public: permissions.public,
-          allowedUsers: permissions.allowedUsers,
-          allowedRoles: permissions.allowedRoles
-        }
+        wallet
       )
 
-      onUpload?.(uploadedDocuments)
+      // Apply permissions to metadata. Unencrypted uploads are always public:
+      // there is nothing to reveal to the permission set, and leaving
+      // `permissions` undefined marks them closed-by-default (see ipfs.ts).
+      const documentsWithPermissions = uploadedDocuments.map((doc) => ({
+        ...doc,
+        permissions: encrypt
+          ? {
+              public: permissions.public,
+              allowedUsers: permissions.allowedUsers,
+              allowedRoles: permissions.allowedRoles,
+            }
+          : undefined,
+      }))
+
+      onUpload?.(documentsWithPermissions)
       setFiles([])
       setPassword('')
       setUploadProgress(0)
@@ -200,6 +213,7 @@ export default function DocumentUpload({
         <input
           ref={fileInputRef}
           type="file"
+          aria-label={multiple ? "Choose files to upload" : "Choose a file to upload"}
           multiple={multiple}
           accept={accept}
           onChange={handleFileSelect}
@@ -231,10 +245,12 @@ export default function DocumentUpload({
                   </div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => removeFile(index)}
+                  aria-label={`Remove ${file.name}`}
                   className="p-1 text-muted-foreground hover:text-foreground"
                 >
-                  <XMarkIcon className="h-4 w-4" />
+                  <XMarkIcon className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
             ))}

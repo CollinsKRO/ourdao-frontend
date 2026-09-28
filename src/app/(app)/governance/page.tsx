@@ -27,8 +27,12 @@ import {
   type UILoanProposal,
   type UITreasuryProposal,
 } from '@/hooks/useDAO'
-import { formatToken, formatAddress, formatThreshold } from '@/lib/utils'
+import { LoadError } from '@/components/LoadError'
+import { useAnnounceLoad } from '@/lib/useAnnounceLoad'
+import { formatToken, formatThreshold } from '@/lib/utils'
+import { formatStellarAddress } from '@/lib/stellar'
 import { PROPOSAL_STATUS_LABELS, PROPOSAL_STATUS_AWAITING_FUNDS } from '@/constants'
+import { VirtualizedList } from '@/components/ui/virtualized-list'
 
 function StatusBadge({ status }: { status: number }) {
   const variant =
@@ -107,7 +111,7 @@ function LoanProposalRow({
         </Link>
         <p className="mt-0.5 text-sm text-muted-foreground">
           {formatToken(p.amount)} · {(p.interestRate / 100).toFixed(1)}% ·{' '}
-          {formatAddress(p.borrower)}
+          {formatStellarAddress(p.borrower)}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           For {p.votesFor} · Against {p.votesAgainst}
@@ -150,12 +154,12 @@ function TreasuryProposalRow({
           <p className="font-medium text-foreground">{p.title}</p>
           {p.isPrivate && (
             <Badge variant="secondary" className="text-xs">
-              Private
+              Private · voting unavailable until commit-reveal
             </Badge>
           )}
         </div>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          {formatToken(p.amount)} → {formatAddress(p.recipient)}
+          {formatToken(p.amount)} → {formatStellarAddress(p.recipient)}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           For {p.votesFor} · Against {p.votesAgainst}
@@ -224,6 +228,8 @@ export default function GovernancePage() {
     loadMore: loadMoreLoans,
     isLoadingMore: loadingMoreLoans,
     hasErrors: loanErrors,
+    isError: loanFailed,
+    refetch: refetchLoans,
   } = useLoanProposals()
   const {
     proposals: treasuryProposals,
@@ -232,7 +238,11 @@ export default function GovernancePage() {
     loadMore: loadMoreTreasury,
     isLoadingMore: loadingMoreTreasury,
     hasErrors: treasuryErrors,
+    isError: treasuryFailed,
+    refetch: refetchTreasury,
   } = useTreasuryProposals()
+  useAnnounceLoad('Loan proposals', loadingLoans, loanFailed)
+  useAnnounceLoad('Treasury proposals', loadingTreasury, treasuryFailed)
   const { voteOnProposal, isPending: votingLoan } = useVoting()
   const { voteOnTreasury, isPending: votingTreasury } = useTreasuryVoting()
 
@@ -326,20 +336,27 @@ export default function GovernancePage() {
               )}
               {loadingLoans ? (
                 <LoadingRows />
+              ) : loanFailed && loanProposals.length === 0 ? (
+                <LoadError what="loan proposals" onRetry={refetchLoans} />
               ) : loanProposals.length === 0 ? (
                 <EmptyState label="No loan proposals yet." />
               ) : (
-                <ul className="divide-y divide-border">
-                  {loanProposals.map((p) => (
+                <VirtualizedList
+                  items={loanProposals}
+                  threshold={50}
+                  itemHeight={120}
+                  className="divide-y divide-border"
+                  listAriaLabel="Loan proposals"
+                  keyExtractor={(p) => p.id}
+                  renderItem={(p) => (
                     <LoanProposalRow
-                      key={p.id}
                       proposal={p}
                       canVote={userData.isMember}
                       votingLoan={votingLoan}
                       onVote={voteOnProposal}
                     />
-                  ))}
-                </ul>
+                  )}
+                />
               )}
               {!loadingLoans && hasMoreLoans && (
                 <div className="mt-4 flex justify-center">
@@ -369,20 +386,27 @@ export default function GovernancePage() {
               )}
               {loadingTreasury ? (
                 <LoadingRows />
+              ) : treasuryFailed && treasuryProposals.length === 0 ? (
+                <LoadError what="treasury proposals" onRetry={refetchTreasury} />
               ) : treasuryProposals.length === 0 ? (
                 <EmptyState label="No treasury withdrawals yet." />
               ) : (
-                <ul className="divide-y divide-border">
-                  {treasuryProposals.map((p) => (
+                <VirtualizedList
+                  items={treasuryProposals}
+                  threshold={50}
+                  itemHeight={120}
+                  className="divide-y divide-border"
+                  listAriaLabel="Treasury proposals"
+                  keyExtractor={(p) => p.id}
+                  renderItem={(p) => (
                     <TreasuryProposalRow
-                      key={p.id}
                       proposal={p}
                       canVote={userData.isMember}
                       votingTreasury={votingTreasury}
                       onVote={voteOnTreasury}
                     />
-                  ))}
-                </ul>
+                  )}
+                />
               )}
               {!loadingTreasury && hasMoreTreasury && (
                 <div className="mt-4 flex justify-center">

@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { canAccessDocument, downloadFromIPFS, type DocumentMetadata } from '@/lib/ipfs'
+import { queryKeys } from '@/lib/query-keys'
 
 const ACCESS_DENIED_MESSAGE = 'You do not have permission to view this doc'
 
@@ -28,7 +29,7 @@ export function useDocumentContent(
   const hasAccess = canAccessDocument(doc, userAddress, userRoles)
 
   const query = useQuery({
-    queryKey: ['document', doc.hash],
+    queryKey: queryKeys.document(doc.hash, userAddress),
     queryFn: () => downloadFromIPFS(doc.hash, false),
     enabled: hasAccess && !doc.encrypted,
   })

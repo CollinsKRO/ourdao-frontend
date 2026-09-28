@@ -50,4 +50,10 @@ export interface UserData {
   pendingYield: bigint
   hasActiveLoan: boolean
   loans: Loan[]
+  /** The member's on-chain data failed to load (as opposed to being absent). */
+  isError?: boolean
+  /** The member's loan history failed to load from the indexer. */
+  loansError?: boolean
+  /** Refetch whichever member reads are in an error state. */
+  refetch?: () => void
 }

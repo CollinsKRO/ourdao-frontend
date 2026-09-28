@@ -26,6 +26,7 @@ import { formatToken } from '@/lib/utils'
 import NotificationCenter from '@/components/NotificationCenter'
 import { OrbitMark } from '@/components/OrbitMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { MAIN_CONTENT_ID } from '@/lib/a11y'
 import { useState } from 'react'
 
 // lucide-react dropped brand/logo icons (including Github) in v1 — inlined here instead.
@@ -188,6 +189,7 @@ export default function Home() {
         )}
       </header>
 
+      <main id={MAIN_CONTENT_ID} tabIndex={-1} className="focus:outline-none">
       {/* Hero Section */}
       <section className="relative overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-background dark:via-indigo-950/40 dark:to-background">
         <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6 sm:py-32 lg:px-8">
@@ -467,6 +469,7 @@ export default function Home() {
         </div>
       </section>
       {/* eslint-enable ourdao/no-raw-gray-classes */}
+      </main>
 
       {/* Footer */}
       {/* eslint-disable ourdao/no-raw-gray-classes -- Intentional: the footer is an always-dark
@@ -514,7 +517,7 @@ export default function Home() {
                 <ul className="space-y-3">
                   <li><span className="text-gray-400 text-sm">Documentation</span></li>
                   <li><a href="https://github.com/ourdao" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-white text-sm transition-colors">GitHub</a></li>
-                  <li><a href={getContractUrl()} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-white text-sm transition-colors">View Contract</a></li>
+                  <li><a href={getContractUrl() ?? undefined} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-white text-sm transition-colors">View Contract</a></li>
                   <li><span className="text-gray-400 text-sm">Support</span></li>
                 </ul>
               </div>

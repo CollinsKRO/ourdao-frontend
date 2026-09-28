@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,11 +9,10 @@ import {
   BanknotesIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
-  LockClosedIcon,
   DocumentIcon
 } from '@heroicons/react/24/outline'
-import { useDAOStats, useUserData, useLoanRequest, useAttachDocument } from '@/hooks/useDAO'
-import { parseToken, formatToken, computeMaxLoan } from '@/lib/utils'
+import { useDAOStats, useUserData, useLoanRequest, useAttachDocument, useLoanTerms } from '@/hooks/useDAO'
+import { parseToken, formatToken, computeMaxLoan, formatThreshold, formatDuration } from '@/lib/utils'
 import dynamic from 'next/dynamic'
 
 // Dynamic import to avoid SSR issues with IPFS
@@ -36,11 +35,18 @@ interface DocumentMetadata {
 }
 import toast from 'react-hot-toast'
 import { PageHeader } from '@/components/PageHeader'
+import { useRequireMember } from '@/hooks/useRequireMember'
+import { FormSkeleton } from '@/components/ui/skeleton'
 
 export default function RequestLoanPage() {
   const router = useRouter()
   const stats = useDAOStats()
   const userData = useUserData()
+  // The guard owns the redirect decision (#307). It waits for the wallet to
+  // finish restoring *and* the membership read to settle before concluding
+  // anything, so a hard refresh no longer bounces a connected member to `/`
+  // while `isConnected` is still its temporary initial `false`.
+  const { isResolving } = useRequireMember({ userData })
   const { requestLoan, isPending: isRequestPending } = useLoanRequest()
   const { attach, isPending: isAttachPending } = useAttachDocument()
 
@@ -64,24 +70,16 @@ export default function RequestLoanPage() {
     : null
   const maxLoanDisplay = maxLoan === null ? null : formatToken(maxLoan, { displayDecimals: 7 })
 
-  // Estimated interest is derived from the amount, not synced state — no
-  // effect needed, it's just recomputed on every render.
-  const estimatedInterest = (() => {
-    if (!formData.amount) return 0
-    const amount = parseFloat(formData.amount)
-    // Simple interest calculation - in real app this would come from contract
-    const baseRate = 8 // 8% base rate
-    const riskMultiplier = amount > 10 ? 1.2 : 1.0 // Higher amounts = higher risk
-    return baseRate * riskMultiplier
-  })()
-
-  useEffect(() => {
-    if (!userData.isConnected) {
-      router.push('/')
-    } else if (!userData.isMember) {
-      router.push('/register')
-    }
-  }, [userData.isConnected, userData.isMember, router])
+  // Price the loan with the contract's own calculate_loan_terms: the rate is a
+  // curve over amount / treasury, clamped by the policy's min/max rates, so it
+  // cannot be reproduced client-side. Amounts over the cap aren't priced since
+  // the contract would reject the request anyway.
+  const parsedAmount = formData.amount ? parseToken(formData.amount) : BigInt(0)
+  const exceedsMax = maxLoan !== null && parsedAmount > maxLoan
+  const { terms, isLoading: termsLoading, isError: termsError } = useLoanTerms(
+    parsedAmount > BigInt(0) && !exceedsMax ? parsedAmount : null
+  )
+  const rateDisplay = terms ? formatThreshold(terms.interestRate) : null
 
   const handleInputChange = (field: 'amount' | 'documentHash', value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -171,27 +169,50 @@ export default function RequestLoanPage() {
                 </p>
               </div>
 
-              {formData.amount && (
-                <div className="bg-blue-50 border border-blue-200 dark:bg-blue-950/30 dark:border-blue-900 rounded-lg p-4">
-                  <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">Estimated Loan Terms</h3>
-                  <div className="space-y-2 text-sm text-blue-800 dark:text-blue-400">
-                    <div className="flex justify-between">
-                      <span>Loan Amount:</span>
-                      <span>{formData.amount}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Estimated Interest Rate:</span>
-                      <span>{estimatedInterest.toFixed(2)}% APR</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Estimated Total Repayment:</span>
-                      <span>{(parseFloat(formData.amount) * (1 + estimatedInterest / 100)).toFixed(4)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Maximum Term:</span>
-                      <span>1 Year</span>
-                    </div>
-                  </div>
+              {parsedAmount > BigInt(0) && (
+                <div
+                  className="bg-blue-50 border border-blue-200 dark:bg-blue-950/30 dark:border-blue-900 rounded-lg p-4"
+                  aria-live="polite"
+                >
+                  <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">Loan Terms</h3>
+                  {exceedsMax ? (
+                    <p className="text-sm text-blue-800 dark:text-blue-400">
+                      Enter an amount within the maximum to see the terms.
+                    </p>
+                  ) : termsError ? (
+                    <p className="text-sm text-blue-800 dark:text-blue-400">
+                      Couldn&apos;t load the loan terms from the contract. They will be set when the loan is approved.
+                    </p>
+                  ) : !terms ? (
+                    <p className="text-sm text-blue-800 dark:text-blue-400">
+                      {termsLoading ? 'Calculating terms…' : 'Loan terms unavailable.'}
+                    </p>
+                  ) : (
+                    <>
+                      <div className="space-y-2 text-sm text-blue-800 dark:text-blue-400">
+                        <div className="flex justify-between">
+                          <span>Loan Amount:</span>
+                          <span>{formatToken(parsedAmount, { displayDecimals: 7 })}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Interest Rate:</span>
+                          <span>{rateDisplay} over the term</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Total Repayment:</span>
+                          <span>{formatToken(terms.totalRepayment, { displayDecimals: 7 })}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Term:</span>
+                          <span>{formatDuration(terms.duration)}</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-blue-700 dark:text-blue-500 mt-2">
+                        Priced by the contract from the current treasury balance and loan policy. Final terms are
+                        fixed when the loan is approved and may differ if either changes.
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -208,6 +229,10 @@ export default function RequestLoanPage() {
                 Upload optional supporting documents to strengthen your loan proposal.
               </p>
             </div>
+
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300" role="note">
+              Loan amounts and proposal details are public on the Stellar ledger. Supporting documents are stored on public IPFS and anyone with the content link can read them. Do not upload sensitive information.
+            </p>
 
             {stats.features.documentStorage ? (
               <div className="space-y-6">
@@ -231,6 +256,8 @@ export default function RequestLoanPage() {
                     multiple
                     accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png"
                     maxSize={5}
+                    allowEncryption={false}
+                    showPermissions={false}
                     onUpload={(documents) => {
                       setUploadedDocuments(documents)
                       // Update document hash with first document's hash
@@ -255,9 +282,6 @@ export default function RequestLoanPage() {
                           <div className="flex items-center space-x-2">
                             <DocumentIcon className="h-4 w-4 text-muted-foreground" />
                             <span className="text-sm text-foreground">{doc.name}</span>
-                            {doc.encrypted && (
-                              <LockClosedIcon className="h-3 w-3 text-blue-500 dark:text-blue-400" title="Encrypted" />
-                            )}
                           </div>
                           <span className="text-xs text-muted-foreground">
                             {(doc.size / 1024).toFixed(1)} KB
@@ -315,13 +339,20 @@ export default function RequestLoanPage() {
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Requested Amount:</span>
-                  <span className="font-medium">{formData.amount}</span>
+                  <span className="font-medium">{formatToken(parseToken(formData.amount), { displayDecimals: 7 })}</span>
                 </div>
 
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Estimated Interest:</span>
-                  <span className="font-medium">{estimatedInterest.toFixed(2)}% APR</span>
+                  <span className="text-muted-foreground">Interest Rate:</span>
+                  <span className="font-medium">{rateDisplay ? `${rateDisplay} over the term` : 'Unavailable'}</span>
                 </div>
+
+                {terms && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Total Repayment:</span>
+                    <span className="font-medium">{formatToken(terms.totalRepayment, { displayDecimals: 7 })}</span>
+                  </div>
+                )}
 
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Supporting Docs:</span>
@@ -339,7 +370,10 @@ export default function RequestLoanPage() {
                 <li>Your loan proposal will be created and enter a 3-day editing phase</li>
                 <li>After editing, members will have 7 days to vote on your proposal</li>
                 <li>If approved by majority consensus, the loan will be automatically disbursed</li>
-                <li>You&apos;ll have up to 1 year to repay the loan with accrued interest</li>
+                <li>
+                  You&apos;ll have {terms ? formatDuration(terms.duration) : 'the policy\'s loan term'} to repay the
+                  loan with interest
+                </li>
               </ol>
             </div>
 
@@ -397,6 +431,26 @@ export default function RequestLoanPage() {
           )
         })}
       </div>
+    )
+  }
+
+  // While the wallet restores / membership resolves we don't yet know whether
+  // this visitor may stay, so show the form's shape rather than the
+  // "Access Restricted" card. The old version rendered the restriction card
+  // immediately on every hard refresh, then swapped it for the form once the
+  // address arrived — a flash of "you can't do this" at a member who can (#307).
+  if (isResolving) {
+    return (
+      <>
+        <PageHeader title="Request a Loan" subtitle="Tell the DAO what you need" />
+        <div className="max-w-2xl mx-auto">
+          <Card>
+            <CardContent className="p-8">
+              <FormSkeleton fields={2} showSubmit={false} />
+            </CardContent>
+          </Card>
+        </div>
+      </>
     )
   }
 
