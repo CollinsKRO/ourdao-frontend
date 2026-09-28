@@ -13,6 +13,7 @@
     "lint": "eslint --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:visual": "playwright test",
     "audit": "audit-ci --config ./audit-ci.jsonc",
     "bundle-size": "node scripts/bundle-size.mjs measure && node scripts/bundle-size.mjs report",
     "depcheck": "depcheck"
@@ -42,6 +43,7 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",

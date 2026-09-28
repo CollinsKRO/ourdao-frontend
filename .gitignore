@@ -46,3 +46,7 @@ next-env.d.ts
 
 # local design screenshots
 shots/
+
+# playwright visual regression (baselines live in test/visual/__screenshots__)
+/test-results/
+/playwright-report/
