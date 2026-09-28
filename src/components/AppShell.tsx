@@ -20,6 +20,7 @@ import {
   Settings,
   Menu,
   TriangleAlert,
+  LogOut,
 } from 'lucide-react'
 import { ConnectButton } from '@/components/ConnectButton'
 import { NetworkBadge } from '@/components/NetworkBadge'
@@ -45,6 +46,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: 'Governance', href: '/governance', icon: Users },
   { name: 'Treasury', href: '/treasury', icon: Landmark },
   { name: 'Privacy', href: '/privacy', icon: ShieldCheck },
+  { name: 'Exit', href: '/exit', icon: LogOut },
 ]
 
 const ADMIN_ITEM: NavItem = { name: 'Admin', href: '/admin', icon: Settings }

@@ -427,6 +427,20 @@ export function useAttachDocument() {
   return { attach, isPending, isSuccess, error, cancelSignature }
 }
 
+export function useExitDao() {
+  const { run, isPending, isSuccess, error, address, cancelSignature } = useWriteAction()
+  // Exiting removes the member from the DAO and withdraws their share, stake,
+  // and pending yield in one transaction. This invalidates the member's data,
+  // the DAO stats (member count, treasury), and the indexer-backed stats.
+  const exitDao = () =>
+    run('Exiting DAO', (w) => w.exitDao(), [
+      queryKeys.userData(address!),
+      queryKeys.daoStats(),
+      queryKeys.backendStats(),
+    ])
+  return { exitDao, isPending, error, isSuccess, cancelSignature }
+}
+
 export function useAdminActions() {
   const { run, isPending, isSuccess, error, cancelSignature } = useWriteAction()
   const pause = () => run('Pausing the DAO', (w) => w.pause(), [queryKeys.daoStats()])
